@@ -1,7 +1,7 @@
 {
   "id": "6e584e2a-0690-44cf-9126-0d47171e98a1",
   "name": "CI/CD Pipeline Demo",
-  "publisher": "Flaconi GmbH",
+  "publisher": "Test",
   "version": "1.0.0.0",
   "brief": "A demonstration app showcasing CI/CD pipeline integration for Business Central.",
   "description": "This app provides a sample implementation of a CI/CD pipeline for Business Central, including integration with third-party extensions such as Continia OPplus and Document Capture. It is intended for demonstration and educational purposes.",
