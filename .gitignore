@@ -1,0 +1,11 @@
+.alpackages
+*.app
+.vscode/launch.json
+*.flf
+TestResults.xml
+BuildOutput.txt
+rad.json
+.output
+.alcache/
+.altemplates/
+cache_*
