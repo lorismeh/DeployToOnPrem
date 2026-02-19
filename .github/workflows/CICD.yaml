@@ -321,6 +321,21 @@ jobs:
         with:
           path: '.artifacts'
 
+      - name: List downloaded artifacts
+        run: |
+          Write-Host "Working directory: $(Get-Location)"
+          Write-Host "Artifacts directory: ${{ github.workspace }}\.artifacts"
+          if (Test-Path ".artifacts") {
+            $files = Get-ChildItem -Path ".artifacts" -Recurse -File
+            Write-Host "Found $($files.Count) file(s):"
+            $files | ForEach-Object { Write-Host "  - $($_.FullName)" }
+            if ($files.Count -eq 0) {
+              Write-Warning "No files found in .artifacts folder!"
+            }
+          } else {
+            Write-Error ".artifacts folder does not exist!"
+          }
+
       - name: Read settings
         uses: microsoft/AL-Go-Actions/ReadSettings@v8.0
         with:

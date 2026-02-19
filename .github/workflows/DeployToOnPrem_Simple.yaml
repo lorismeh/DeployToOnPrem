@@ -1,0 +1,339 @@
+name: Deploy to OnPrem (Simple)
+
+# This workflow provides a simpler alternative to the standard AL-Go deployment
+# Based on https://github.com/microsoft/AL-Go/issues/519
+# 
+# It builds the AL app, then deploys directly to on-premise BC using a custom script
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'BCOnPremTest'
+        type: choice
+        options:
+          - BCOnPremTest
+      syncMode:
+        description: 'Sync mode for schema changes'
+        required: true
+        default: 'Add'
+        type: choice
+        options:
+          - Add
+          - ForceSync
+          - Development
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - '.github/workflows/*.yaml'
+      - '!.github/workflows/DeployToOnPrem_Simple.yaml'
+
+defaults:
+  run:
+    shell: powershell
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  # Deployment folder on the self-hosted runner
+  DEPLOY_PATH: 'C:\Deploy\DeployOnPrem\CustomApps'
+
+jobs:
+  Build:
+    name: Build AL App
+    runs-on: windows-latest
+    outputs:
+      artifactName: ${{ steps.build.outputs.artifactName }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read app.json
+        id: appinfo
+        run: |
+          $appJson = Get-Content -Path "app.json" -Raw | ConvertFrom-Json
+          $appName = $appJson.name
+          $appVersion = $appJson.version
+          $appPublisher = $appJson.publisher
+          Write-Host "App: $appName v$appVersion by $appPublisher"
+          "appName=$appName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "appVersion=$appVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "artifactName=$($appPublisher)_$($appName)_$($appVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Download symbols
+        id: download-symbols
+        uses: microsoft/AL-Go-Actions/DownloadProjectDependencies@v8.0
+        with:
+          shell: powershell
+          project: '.'
+          buildMode: 'default'
+
+      - name: Build AL app
+        id: build
+        run: |
+          $appJson = Get-Content -Path "app.json" -Raw | ConvertFrom-Json
+          $appName = $appJson.name
+          $appVersion = $appJson.version
+          $appPublisher = $appJson.publisher
+          
+          # Find AL compiler
+          $alcPath = Get-ChildItem -Path "$env:USERPROFILE\.vscode\extensions" -Recurse -Filter "alc.exe" | 
+                     Sort-Object LastWriteTime -Descending | 
+                     Select-Object -First 1 -ExpandProperty FullName
+          
+          if (-not $alcPath) {
+            # Try BcContainerHelper location
+            $alcPath = Get-ChildItem -Path "C:\ProgramData\BcContainerHelper" -Recurse -Filter "alc.exe" -ErrorAction SilentlyContinue | 
+                       Sort-Object LastWriteTime -Descending | 
+                       Select-Object -First 1 -ExpandProperty FullName
+          }
+          
+          if (-not $alcPath) {
+            throw "AL compiler (alc.exe) not found"
+          }
+          
+          Write-Host "Using AL compiler: $alcPath"
+          
+          # Create output folder
+          $outputFolder = Join-Path $env:GITHUB_WORKSPACE ".output"
+          New-Item -ItemType Directory -Path $outputFolder -Force | Out-Null
+          
+          # Build the app
+          $appFileName = "$($appPublisher)_$($appName)_$($appVersion).app"
+          $appPath = Join-Path $outputFolder $appFileName
+          
+          & $alcPath /project:$env:GITHUB_WORKSPACE /out:$appPath /packagecachepath:.alpackages
+          
+          if ($LASTEXITCODE -ne 0) {
+            throw "AL compilation failed"
+          }
+          
+          Write-Host "Built: $appPath"
+          "appPath=$appPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "artifactName=$($appPublisher)_$($appName)_$($appVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.appinfo.outputs.artifactName }}
+          path: .output/*.app
+          retention-days: 7
+
+  Deploy:
+    name: Deploy to ${{ github.event.inputs.environment || 'BCOnPremTest' }}
+    needs: Build
+    runs-on: [self-hosted, bc-onprem]
+    environment:
+      name: ${{ github.event.inputs.environment || 'BCOnPremTest' }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: .artifacts
+
+      - name: List artifacts
+        run: |
+          Write-Host "Downloaded artifacts:"
+          Get-ChildItem -Path ".artifacts" -Recurse | ForEach-Object {
+            Write-Host "  $($_.FullName)"
+          }
+
+      - name: Prepare deployment folder
+        run: |
+          $deployPath = "${{ env.DEPLOY_PATH }}"
+          
+          # Create folder if not exists
+          if (-not (Test-Path $deployPath)) {
+            New-Item -ItemType Directory -Path $deployPath -Force | Out-Null
+            Write-Host "Created deployment folder: $deployPath"
+          }
+          
+          # Clean up
+          Write-Host "Cleaning deployment folder..."
+          Get-ChildItem -Path $deployPath -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+          
+          # Copy artifacts
+          Write-Host "Copying artifacts to deployment folder..."
+          Copy-Item -Path ".artifacts\*\*.app" -Destination $deployPath -Force -Recurse
+          
+          # List copied files
+          Write-Host "Files ready for deployment:"
+          Get-ChildItem -Path $deployPath -Filter "*.app" | ForEach-Object {
+            Write-Host "  $($_.Name)"
+          }
+
+      - name: Deploy to Business Central
+        env:
+          AUTH_CONTEXT: ${{ secrets.BCONPREMTEST_AUTHCONTEXT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $deployPath = "${{ env.DEPLOY_PATH }}"
+          $syncMode = "${{ github.event.inputs.syncMode || 'Add' }}"
+          
+          Write-Host "========================================"
+          Write-Host "  Deploying to Business Central OnPrem"
+          Write-Host "========================================"
+          Write-Host ""
+          
+          # Parse AuthContext
+          $serverInstance = "BC"
+          $tenant = "default"
+          
+          if ($env:AUTH_CONTEXT) {
+            try {
+              $authContext = $env:AUTH_CONTEXT | ConvertFrom-Json
+              if ($authContext.ServerInstance) { $serverInstance = $authContext.ServerInstance }
+              if ($authContext.Tenant) { $tenant = $authContext.Tenant }
+              if ($authContext.SyncMode) { $syncMode = $authContext.SyncMode }
+              Write-Host "Using AuthContext: Instance=$serverInstance, Tenant=$tenant"
+            }
+            catch {
+              Write-Host "Warning: Could not parse AUTH_CONTEXT, using defaults"
+            }
+          }
+          
+          Write-Host "Server Instance: $serverInstance"
+          Write-Host "Tenant: $tenant"
+          Write-Host "Sync Mode: $syncMode"
+          Write-Host ""
+          
+          # Import BC Management module
+          Write-Host "Loading BC Management module..."
+          $modulePaths = @(
+            "C:\Program Files\Microsoft Dynamics 365 Business Central\*\Service\NavAdminTool.ps1",
+            "C:\Program Files\Microsoft Dynamics 365 Business Central\*\Service\Microsoft.Dynamics.Nav.Management.psm1"
+          )
+          
+          $moduleLoaded = $false
+          foreach ($pattern in $modulePaths) {
+            $resolved = Resolve-Path $pattern -ErrorAction SilentlyContinue | Sort-Object -Descending | Select-Object -First 1
+            if ($resolved) {
+              try {
+                if ($resolved.Path -like "*.ps1") {
+                  . $resolved.Path
+                } else {
+                  Import-Module $resolved.Path -Force -DisableNameChecking
+                }
+                Write-Host "Loaded: $($resolved.Path)"
+                $moduleLoaded = $true
+                break
+              }
+              catch {
+                Write-Host "Failed to load: $_"
+              }
+            }
+          }
+          
+          if (-not $moduleLoaded) {
+            throw "Could not load BC Management module"
+          }
+          
+          # Get app files
+          $appFiles = Get-ChildItem -Path $deployPath -Filter "*.app"
+          Write-Host ""
+          Write-Host "Found $($appFiles.Count) app(s) to deploy"
+          Write-Host ""
+          
+          $successCount = 0
+          $failedApps = @()
+          
+          foreach ($appFile in $appFiles) {
+            Write-Host "----------------------------------------"
+            Write-Host "Processing: $($appFile.Name)"
+            
+            try {
+              # Get app info
+              $appInfo = Get-NAVAppInfo -Path $appFile.FullName -ErrorAction SilentlyContinue
+              $appName = if ($appInfo) { $appInfo.Name } else { $appFile.BaseName }
+              $appVersion = if ($appInfo) { $appInfo.Version } else { "1.0.0.0" }
+              $appPublisher = if ($appInfo) { $appInfo.Publisher } else { "Unknown" }
+              
+              Write-Host "  App: $appName v$appVersion by $appPublisher"
+              
+              # Publish
+              Write-Host "  Publishing..."
+              try {
+                Publish-NAVApp -ServerInstance $serverInstance -Path $appFile.FullName -SkipVerification -Scope Tenant -Tenant $tenant
+                Write-Host "  Published successfully"
+              }
+              catch {
+                if ($_.Exception.Message -like "*already published*") {
+                  Write-Host "  Already published, continuing..."
+                }
+                else {
+                  throw $_
+                }
+              }
+              
+              # Sync
+              Write-Host "  Syncing (Mode: $syncMode)..."
+              try {
+                Sync-NAVApp -ServerInstance $serverInstance -Name $appName -Publisher $appPublisher -Version $appVersion -Tenant $tenant -Mode $syncMode
+                Write-Host "  Synced successfully"
+              }
+              catch {
+                Write-Host "  Sync warning: $_"
+              }
+              
+              # Install/Upgrade
+              Write-Host "  Installing..."
+              try {
+                $installedApp = Get-NAVAppInfo -ServerInstance $serverInstance -Name $appName -Publisher $appPublisher -Tenant $tenant -ErrorAction SilentlyContinue | 
+                                Where-Object { $_.IsInstalled }
+                
+                if ($installedApp) {
+                  if ($installedApp.Version -lt $appVersion) {
+                    Write-Host "  Upgrading from v$($installedApp.Version)..."
+                    Start-NAVAppDataUpgrade -ServerInstance $serverInstance -Name $appName -Publisher $appPublisher -Version $appVersion -Tenant $tenant
+                  }
+                  elseif ($installedApp.Version -eq $appVersion) {
+                    Write-Host "  Same version - reinstalling..."
+                    Uninstall-NAVApp -ServerInstance $serverInstance -Name $appName -Publisher $appPublisher -Version $appVersion -Tenant $tenant -Force -ErrorAction SilentlyContinue
+                    Install-NAVApp -ServerInstance $serverInstance -Name $appName -Publisher $appPublisher -Version $appVersion -Tenant $tenant
+                  }
+                  else {
+                    Write-Host "  Newer version already installed, skipping"
+                  }
+                }
+                else {
+                  Install-NAVApp -ServerInstance $serverInstance -Name $appName -Publisher $appPublisher -Version $appVersion -Tenant $tenant
+                }
+                Write-Host "  Installed successfully"
+              }
+              catch {
+                throw "Install failed: $_"
+              }
+              
+              $successCount++
+              Write-Host "  DONE" -ForegroundColor Green
+            }
+            catch {
+              Write-Host "  FAILED: $_" -ForegroundColor Red
+              $failedApps += $appFile.Name
+            }
+          }
+          
+          # Summary
+          Write-Host ""
+          Write-Host "========================================"
+          if ($failedApps.Count -eq 0) {
+            Write-Host "  DEPLOYMENT SUCCESSFUL" -ForegroundColor Green
+            Write-Host "  Deployed: $successCount app(s)"
+          }
+          else {
+            Write-Host "  DEPLOYMENT COMPLETED WITH ERRORS" -ForegroundColor Yellow
+            Write-Host "  Succeeded: $successCount | Failed: $($failedApps.Count)"
+            throw "Failed to deploy: $($failedApps -join ', ')"
+          }
+          Write-Host "========================================"
