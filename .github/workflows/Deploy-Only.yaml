@@ -39,6 +39,8 @@ jobs:
           run-id: ${{ inputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: .artifacts
+          pattern: 'Apps-*'
+          merge-multiple: true
 
       - name: Download latest successful build artifacts
         if: inputs.run_id == ''
@@ -47,7 +49,9 @@ jobs:
           workflow: CICD.yaml
           workflow_conclusion: success
           path: .artifacts
-          search_artifacts: true
+          name: Apps-.*
+          name_is_regexp: true
+          if_no_artifact_found: fail
 
       - name: List downloaded artifacts
         run: |
