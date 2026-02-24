@@ -367,8 +367,13 @@ function Invoke-BCDeployment {
     
     try {
         # Check if any version is already installed
-        $installedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $info.Name -Publisher $info.Publisher -Tenant $Tenant -ErrorAction SilentlyContinue | 
-                        Where-Object { $_.IsInstalled }
+        # Query without -Tenant first to find all published versions
+        $allApps = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $info.Name -Publisher $info.Publisher -ErrorAction SilentlyContinue
+        
+        # Then filter for installed apps on the specific tenant
+        $installedApp = $allApps | Where-Object { 
+            $_.IsInstalled -and ($_.Tenant -eq $Tenant -or $Tenant -eq 'default' -or [string]::IsNullOrEmpty($Tenant))
+        } | Select-Object -First 1
         
         if ($installedApp) {
             if ($installedApp.Version -lt $info.Version) {
@@ -699,6 +704,15 @@ function Invoke-RemoteBCDeployment {
                             else {
                                 throw $_
                             }
+                        }
+                        
+                        # Get the actual published app info from server (more reliable than reading from file)
+                        $publishedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Path $appFile.FullName -ErrorAction SilentlyContinue
+                        if ($publishedApp) {
+                            $appName = $publishedApp.Name
+                            $appVersion = $publishedApp.Version
+                            $appPublisher = $publishedApp.Publisher
+                            Write-Host "[REMOTE]   Verified published app: $appName v$appVersion by $appPublisher"
                         }
                         
                         # Sync
