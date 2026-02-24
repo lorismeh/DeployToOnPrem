@@ -706,30 +706,34 @@ function Invoke-RemoteBCDeployment {
                             }
                         }
                         
-                        # Get the actual published app info from server (more reliable than reading from file)
-                        # Query all published apps and find the one we just published by matching the original info
-                        $allPublishedApps = Get-NAVAppInfo -ServerInstance $ServerInstance -ErrorAction SilentlyContinue
-                        if ($appInfo) {
-                            # If we got appInfo from the file, find the matching published app
-                            $publishedApp = $allPublishedApps | Where-Object { 
-                                $_.Name -eq $appInfo.Name -and 
-                                $_.Publisher -eq $appInfo.Publisher -and 
-                                $_.Version -eq $appInfo.Version 
-                            } | Select-Object -First 1
-                        } else {
-                            # Fallback: find by file name pattern
-                            $publishedApp = $allPublishedApps | Where-Object { 
-                                $_.Name -like "*$($appFile.BaseName.Split('_')[0])*" 
-                            } | Sort-Object Version -Descending | Select-Object -First 1
-                        }
+                        # CRITICAL FIX: Get app info directly from server after publishing
+                        # Query the published app using the file path - BC knows what it just published
+                        Write-Host "[REMOTE]   Querying published app metadata from server..."
+                        $publishedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Path $appFile.FullName -ErrorAction SilentlyContinue
                         
                         if ($publishedApp) {
+                            # Use the EXACT metadata that BC has for this published app
                             $appName = $publishedApp.Name
                             $appVersion = $publishedApp.Version
                             $appPublisher = $publishedApp.Publisher
-                            Write-Host "[REMOTE]   Verified published app: $appName v$appVersion by $appPublisher"
+                            Write-Host "[REMOTE]   Published app metadata: $appName v$appVersion by $appPublisher"
                         } else {
-                            Write-Host "[REMOTE]   Warning: Could not verify published app from server, using file metadata"
+                            # Fallback: Query all published apps and find the most recent one matching the file
+                            Write-Host "[REMOTE]   Warning: Could not read app from file, querying all published apps..."
+                            $allPublishedApps = Get-NAVAppInfo -ServerInstance $ServerInstance -ErrorAction SilentlyContinue | Sort-Object Version -Descending
+                            
+                            # Try to match by looking at the most recently published app
+                            # This assumes we just published it, so it should be at or near the top
+                            $publishedApp = $allPublishedApps | Select-Object -First 1
+                            
+                            if ($publishedApp) {
+                                $appName = $publishedApp.Name
+                                $appVersion = $publishedApp.Version
+                                $appPublisher = $publishedApp.Publisher
+                                Write-Host "[REMOTE]   Using most recent published app: $appName v$appVersion by $appPublisher"
+                            } else {
+                                throw "Cannot determine app metadata - no published apps found on server"
+                            }
                         }
                         
                         # Sync
