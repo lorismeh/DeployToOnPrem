@@ -883,25 +883,25 @@ try {
         }
     }
     
-    # Extract configuration from AuthContext
+    # Extract configuration from AuthContext (using PSObject.Properties to safely check for optional properties)
     $server = $authContext.Server
     $serverInstance = $authContext.ServerInstance
-    $port = if ($authContext.Port) { $authContext.Port } else { $DefaultPort }
-    $tenant = if ($authContext.Tenant) { $authContext.Tenant } else { "default" }
-    $authentication = if ($authContext.Authentication) { $authContext.Authentication } else { "Windows" }
-    $syncMode = if ($authContext.SyncMode) { $authContext.SyncMode } else { $DefaultSyncMode }
-    $scope = if ($authContext.Scope) { $authContext.Scope } else { $DefaultScope }
-    $cleanupOldVersions = if ($null -ne $authContext.CleanupOldVersions) { $authContext.CleanupOldVersions } else { $true }
-    $keepVersions = if ($authContext.KeepVersions) { $authContext.KeepVersions } else { 2 }
-    $skipVerification = if ($null -ne $authContext.SkipVerification) { $authContext.SkipVerification } else { $true }
+    $port = if ($authContext.PSObject.Properties['Port']) { $authContext.Port } else { $DefaultPort }
+    $tenant = if ($authContext.PSObject.Properties['Tenant']) { $authContext.Tenant } else { "default" }
+    $authentication = if ($authContext.PSObject.Properties['Authentication']) { $authContext.Authentication } else { "Windows" }
+    $syncMode = if ($authContext.PSObject.Properties['SyncMode']) { $authContext.SyncMode } else { $DefaultSyncMode }
+    $scope = if ($authContext.PSObject.Properties['Scope']) { $authContext.Scope } else { $DefaultScope }
+    $cleanupOldVersions = if ($authContext.PSObject.Properties['CleanupOldVersions'] -and $null -ne $authContext.CleanupOldVersions) { $authContext.CleanupOldVersions } else { $true }
+    $keepVersions = if ($authContext.PSObject.Properties['KeepVersions']) { $authContext.KeepVersions } else { 2 }
+    $skipVerification = if ($authContext.PSObject.Properties['SkipVerification'] -and $null -ne $authContext.SkipVerification) { $authContext.SkipVerification } else { $true }
     
     # Remote deployment configuration
-    $useRemoteDeployment = if ($null -ne $authContext.UseRemoteDeployment) { $authContext.UseRemoteDeployment } else { $null }  # null = auto-detect
-    $remoteUsername = $authContext.RemoteUsername
-    $remotePassword = $authContext.RemotePassword
-    $remoteSharePath = $authContext.RemoteSharePath  # e.g., \\server\c$\temp or \\server\BCDeploy
-    $winRMPort = if ($authContext.WinRMPort) { $authContext.WinRMPort } else { $DefaultWinRMPort }
-    $useSSL = if ($null -ne $authContext.UseSSL) { $authContext.UseSSL } else { $false }
+    $useRemoteDeployment = if ($authContext.PSObject.Properties['UseRemoteDeployment'] -and $null -ne $authContext.UseRemoteDeployment) { $authContext.UseRemoteDeployment } else { $null }  # null = auto-detect
+    $remoteUsername = if ($authContext.PSObject.Properties['RemoteUsername']) { $authContext.RemoteUsername } else { $null }
+    $remotePassword = if ($authContext.PSObject.Properties['RemotePassword']) { $authContext.RemotePassword } else { $null }
+    $remoteSharePath = if ($authContext.PSObject.Properties['RemoteSharePath']) { $authContext.RemoteSharePath } else { $null }  # e.g., \\server\c$\temp or \\server\BCDeploy
+    $winRMPort = if ($authContext.PSObject.Properties['WinRMPort']) { $authContext.WinRMPort } else { $DefaultWinRMPort }
+    $useSSL = if ($authContext.PSObject.Properties['UseSSL'] -and $null -ne $authContext.UseSSL) { $authContext.UseSSL } else { $false }
     
     # Determine if remote deployment is needed
     $isRemote = if ($null -ne $useRemoteDeployment) { 
