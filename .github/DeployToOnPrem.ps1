@@ -707,12 +707,29 @@ function Invoke-RemoteBCDeployment {
                         }
                         
                         # Get the actual published app info from server (more reliable than reading from file)
-                        $publishedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Path $appFile.FullName -ErrorAction SilentlyContinue
+                        # Query all published apps and find the one we just published by matching the original info
+                        $allPublishedApps = Get-NAVAppInfo -ServerInstance $ServerInstance -ErrorAction SilentlyContinue
+                        if ($appInfo) {
+                            # If we got appInfo from the file, find the matching published app
+                            $publishedApp = $allPublishedApps | Where-Object { 
+                                $_.Name -eq $appInfo.Name -and 
+                                $_.Publisher -eq $appInfo.Publisher -and 
+                                $_.Version -eq $appInfo.Version 
+                            } | Select-Object -First 1
+                        } else {
+                            # Fallback: find by file name pattern
+                            $publishedApp = $allPublishedApps | Where-Object { 
+                                $_.Name -like "*$($appFile.BaseName.Split('_')[0])*" 
+                            } | Sort-Object Version -Descending | Select-Object -First 1
+                        }
+                        
                         if ($publishedApp) {
                             $appName = $publishedApp.Name
                             $appVersion = $publishedApp.Version
                             $appPublisher = $publishedApp.Publisher
                             Write-Host "[REMOTE]   Verified published app: $appName v$appVersion by $appPublisher"
+                        } else {
+                            Write-Host "[REMOTE]   Warning: Could not verify published app from server, using file metadata"
                         }
                         
                         # Sync
