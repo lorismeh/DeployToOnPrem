@@ -951,10 +951,10 @@ try {
         Copy-Item -Path $apps -Destination $tempFolder -Force
     }
     
-    # Find all .app files
-    $appFiles = Get-ChildItem -Path $tempFolder -Filter "*.app" -Recurse
+    # Find all .app files (wrap in @() to ensure array even for single/null results)
+    $appFiles = @(Get-ChildItem -Path $tempFolder -Filter "*.app" -Recurse -ErrorAction SilentlyContinue)
     
-    if ($appFiles.Count -eq 0) {
+    if ($null -eq $appFiles -or $appFiles.Count -eq 0) {
         throw "No .app files found in the deployment package"
     }
     
@@ -1263,12 +1263,12 @@ try {
                 
             } -ArgumentList $remoteAppsPath, $serverInstance, $tenant, $syncMode, $scope, $skipVerification, $cleanupOldVersions, $keepVersions
             
-            # Process remote results
-            $successCount = $remoteResult.Success.Count
-            $failedApps = $remoteResult.Failed
+            # Process remote results (safely handle null or non-array results)
+            $successCount = if ($remoteResult -and $remoteResult.Success) { @($remoteResult.Success).Count } else { 0 }
+            $failedApps = if ($remoteResult -and $remoteResult.Failed) { @($remoteResult.Failed) } else { @() }
             
-            if ($remoteResult.Errors.Count -gt 0) {
-                foreach ($err in $remoteResult.Errors) {
+            if ($remoteResult -and $remoteResult.Errors -and @($remoteResult.Errors).Count -gt 0) {
+                foreach ($err in @($remoteResult.Errors)) {
                     Write-DeployLog "Remote error: $err" -Level Error
                 }
             }
@@ -1327,6 +1327,9 @@ try {
         }
         #endregion
     }
+    
+    # Ensure failedApps is an array
+    $failedApps = @($failedApps)
     
     Write-Host ""
     Write-Host "==============================================" -ForegroundColor Cyan
@@ -1396,8 +1399,8 @@ catch {
     throw $_
 }
 finally {
-    # Cleanup temp folder
-    if ($tempFolder -and (Test-Path $tempFolder)) {
+    # Cleanup temp folder (use Get-Variable to safely check if variable exists)
+    if ((Get-Variable -Name 'tempFolder' -ErrorAction SilentlyContinue) -and $tempFolder -and (Test-Path $tempFolder -ErrorAction SilentlyContinue)) {
         Write-DeployLog "Cleaning up temp folder..." -Level Debug
         Remove-Item -Path $tempFolder -Recurse -Force -ErrorAction SilentlyContinue
     }
