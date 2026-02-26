@@ -292,7 +292,7 @@ function Invoke-BCDeployment {
         [string]$ServerInstance,
         [string]$Tenant = "default",
         [ValidateSet("Add", "ForceSync", "Development", "Clean")]
-        [string]$SyncMode = "Add",
+        [string]$SyncMode = "ForceSync",
         [ValidateSet("Tenant", "Global")]
         [string]$Scope = "Tenant",
         [switch]$SkipVerification,
@@ -312,11 +312,11 @@ function Invoke-BCDeployment {
         SkipVerification = $SkipVerification
         Scope            = $Scope
     }
-    
+
     if ($Tenant -and $Scope -eq "Tenant") {
         $publishParams.Tenant = $Tenant
     }
-    
+
     try {
         Publish-NAVApp @publishParams
         Write-DeployLog "  Published successfully" -Level Success
@@ -329,23 +329,37 @@ function Invoke-BCDeployment {
             throw "Failed to publish: $_"
         }
     }
-    
+
+    # Refresh app metadata from BC server
+    $publishedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $info.Name -ErrorAction SilentlyContinue | Where-Object {
+        $_.Version -eq $info.Version -and $_.Publisher
+    }
+    if ($publishedApp) {
+        $syncName = $publishedApp.Name
+        $syncPublisher = $publishedApp.Publisher
+        $syncVersion = $publishedApp.Version
+    } else {
+        $syncName = $info.Name
+        $syncPublisher = $info.Publisher
+        $syncVersion = $info.Version
+    }
+
     # Step 2: Sync
     Write-DeployLog "  Step 2/3: Syncing app (Mode: $SyncMode)..." -Level Info
     $syncParams = @{
         ServerInstance = $ServerInstance
-        Name           = $info.Name
-        Publisher      = $info.Publisher
-        Version        = $info.Version
+        Name           = $syncName
+        Publisher      = $syncPublisher
+        Version        = $syncVersion
         Mode           = $SyncMode
     }
-    
+
     if ($Tenant) {
         $syncParams.Tenant = $Tenant
     }
-    
+
     try {
-        Sync-NAVApp -ServerInstance $ServerInstance -Name "CI/CD Pipeline Demo" -Version $info.Version -Tenant $Tenant -Mode $SyncMode -Force:$Force
+        Sync-NAVApp @syncParams
         Write-DeployLog "  Synced successfully" -Level Success
     }
     catch {
@@ -750,7 +764,7 @@ function Invoke-RemoteBCDeployment {
                         }
                         
                         try {
-                            Sync-NAVApp @syncParams
+                            Sync-NAVApp -ServerInstance $ServerInstance -Name "CI/CD Pipeline Demo" -Version $info.Version -Tenant $Tenant -Mode $SyncMode -Force:$Force
                             Write-Host "[REMOTE]   Synced successfully"
                         }
                         catch {
@@ -1205,7 +1219,7 @@ try {
                             }
                             
                             try {
-                                Sync-NAVApp @syncParams
+                                Sync-NAVApp -ServerInstance $ServerInstance -Name "CI/CD Pipeline Demo" -Version $info.Version -Tenant $Tenant -Mode $SyncMode -Force:$Force
                                 Write-Host "[REMOTE]   Synced successfully"
                             }
                             catch {
