@@ -345,7 +345,7 @@ function Invoke-BCDeployment {
     }
     
     try {
-        Sync-NAVApp @syncParams
+        Sync-NAVApp -ServerInstance $ServerInstance -Name "CI/CD Pipeline Demo" -Version $info.Version -Tenant $Tenant -Mode $SyncMode -Force:$Force
         Write-DeployLog "  Synced successfully" -Level Success
     }
     catch {
