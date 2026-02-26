@@ -342,6 +342,8 @@ function Invoke-BCDeployment {
         $syncName = $info.Name
         $syncPublisher = $info.Publisher
         $syncVersion = $info.Version
+
+        Write-DeployLog "Published App Name and Publisher: $publishedApp.Name, $publishedApp.Publisher" -Level Info
     }
 
     # Step 2: Sync
