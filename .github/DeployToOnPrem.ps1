@@ -196,7 +196,6 @@ function Get-SortedAppsByDependency {
             Dependencies = $deps
             AppId        = $info.AppId
         }
-        Write-DeployLog "App analyzed: $($info.Name), Dependencies: $($deps.Name)" -Level Info ####TODO
     }
     
     # Topological sort based on dependencies
@@ -343,8 +342,6 @@ function Invoke-BCDeployment {
         $syncName = $info.Name
         $syncPublisher = $info.Publisher
         $syncVersion = $info.Version
-
-        Write-DeployLog "Published App Name and Publisher: $publishedApp.Name, $publishedApp.Publisher" -Level Info  ####TODO
     }
 
     # Step 2: Sync
@@ -362,7 +359,7 @@ function Invoke-BCDeployment {
     }
 
     try {
-        Sync-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.21.0"
+        Sync-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.22.0"
         Write-DeployLog "  Synced successfully" -Level Success
     }
     catch {
@@ -767,7 +764,7 @@ function Invoke-RemoteBCDeployment {
                         }
                         
                         try {
-                            Sync-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.21.0"
+                            Sync-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.22.0"
                             Write-Host "[REMOTE]   Synced successfully"
                         }
                         catch {
@@ -1222,7 +1219,7 @@ try {
                             }
                             
                             try {
-                                Sync-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.21.0" -Tenant $Tenant -Mode $SyncMode -Force:$Force
+                                Sync-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.22.0" -Tenant $Tenant -Mode $SyncMode -Force:$Force
                                 Write-Host "[REMOTE]   Synced successfully"
                             }
                             catch {
