@@ -330,18 +330,35 @@ function Invoke-BCDeployment {
         }
     }
 
-    # Refresh app metadata from BC server  #TODO
-    $publishedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $info.Name -ErrorAction SilentlyContinue | Where-Object {
-        $_.Version -eq $info.Version -and $_.Publisher
-    }
+    # CRITICAL: Get exact app metadata from BC server after publishing
+    # Query using -Path parameter to get what BC actually published
+    Write-DeployLog "  Querying published app metadata from BC server..." -Level Debug
+    $publishedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Path $appFile.FullName -ErrorAction SilentlyContinue
+    
     if ($publishedApp) {
         $syncName = $publishedApp.Name
         $syncPublisher = $publishedApp.Publisher
         $syncVersion = $publishedApp.Version
+        Write-DeployLog "  Using BC server metadata: $syncName v$syncVersion by $syncPublisher" -Level Debug
     } else {
-        $syncName = $info.Name
-        $syncPublisher = $info.Publisher
-        $syncVersion = $info.Version
+        # Fallback: try querying by name/version
+        Write-DeployLog "  Warning: Could not query by path, trying name/version query..." -Level Warning
+        $publishedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $info.Name -ErrorAction SilentlyContinue | 
+                        Where-Object { $_.Version -eq $info.Version } | 
+                        Select-Object -First 1
+        
+        if ($publishedApp) {
+            $syncName = $publishedApp.Name
+            $syncPublisher = $publishedApp.Publisher
+            $syncVersion = $publishedApp.Version
+            Write-DeployLog "  Using fallback metadata: $syncName v$syncVersion by $syncPublisher" -Level Debug
+        } else {
+            # Last resort: use original file metadata
+            $syncName = $info.Name
+            $syncPublisher = $info.Publisher
+            $syncVersion = $info.Version
+            Write-DeployLog "  Warning: Using file metadata (BC query failed): $syncName v$syncVersion by $syncPublisher" -Level Warning
+        }
     }
 
     # Step 2: Sync
@@ -359,7 +376,7 @@ function Invoke-BCDeployment {
     }
 
     try {
-        Sync-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.23.0"
+        Sync-NAVApp @syncParams
         Write-DeployLog "  Synced successfully" -Level Success
     }
     catch {
@@ -370,9 +387,9 @@ function Invoke-BCDeployment {
     Write-DeployLog "  Step 3/3: Installing/Upgrading app..." -Level Info
     $installParams = @{
         ServerInstance = $ServerInstance
-        Name           = $info.Name
-        Publisher      = $info.Publisher
-        Version        = $info.Version
+        Name           = $syncName
+        Publisher      = $syncPublisher
+        Version        = $syncVersion
     }
     
     if ($Tenant) {
@@ -380,9 +397,8 @@ function Invoke-BCDeployment {
     }
     
     try {
-        # Check if any version is already installed
-        # Query without -Tenant first to find all published versions
-        $allApps = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $info.Name -Publisher $info.Publisher -ErrorAction SilentlyContinue
+        # Check if any version is already installed using the correct BC server metadata
+        $allApps = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $syncName -Publisher $syncPublisher -ErrorAction SilentlyContinue
         
         # Then filter for installed apps on the specific tenant
         $installedApp = $allApps | Where-Object { 
@@ -390,15 +406,15 @@ function Invoke-BCDeployment {
         } | Select-Object -First 1
         
         if ($installedApp) {
-            if ($installedApp.Version -lt $info.Version) {
-                Write-DeployLog "  Upgrading from v$($installedApp.Version) to v$($info.Version)..." -Level Info
+            if ($installedApp.Version -lt $syncVersion) {
+                Write-DeployLog "  Upgrading from v$($installedApp.Version) to v$syncVersion..." -Level Info
                 Start-NAVAppDataUpgrade @installParams
                 Write-DeployLog "  Data upgrade completed" -Level Success
             }
-            elseif ($installedApp.Version -eq $info.Version) {
+            elseif ($installedApp.Version -eq $syncVersion) {
                 Write-DeployLog "  Same version already installed, reinstalling..." -Level Warning
-                Uninstall-NAVApp -ServerInstance $ServerInstance -Name $info.Name -Publisher $info.Publisher -Version $info.Version -Tenant $Tenant -Force
-                Install-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.23.0"
+                Uninstall-NAVApp -ServerInstance $ServerInstance -Name $syncName -Publisher $syncPublisher -Version $syncVersion -Tenant $Tenant -Force
+                Install-NAVApp @installParams
                 Write-DeployLog "  Reinstalled successfully" -Level Success
             }
             else {
@@ -406,7 +422,7 @@ function Invoke-BCDeployment {
             }
         }
         else {
-           Install-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.23.0"
+           Install-NAVApp @installParams
             Write-DeployLog "  Installed successfully" -Level Success
         }
     }
@@ -764,7 +780,7 @@ function Invoke-RemoteBCDeployment {
                         }
                         
                         try {
-                            Sync-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.23.0"
+                            Sync-NAVApp @syncParams
                             Write-Host "[REMOTE]   Synced successfully"
                         }
                         catch {
@@ -795,14 +811,14 @@ function Invoke-RemoteBCDeployment {
                                 elseif ($installedApp.Version -eq $appVersion) {
                                     Write-Host "[REMOTE]   Reinstalling same version..."
                                     Uninstall-NAVApp -ServerInstance $ServerInstance -Name $appName -Publisher $appPublisher -Version $appVersion -Tenant $Tenant -Force -ErrorAction SilentlyContinue
-                                    Install-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.23.0"
+                                    Install-NAVApp @installParams
                                 }
                                 else {
                                     Write-Host "[REMOTE]   Newer version already installed, skipping"
                                 }
                             }
                             else {
-                               Install-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.23.0"
+                               Install-NAVApp @installParams
                             }
                             Write-Host "[REMOTE]   Installed successfully"
                         }
@@ -1219,7 +1235,7 @@ try {
                             }
                             
                             try {
-                                Sync-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.23.0" -Tenant $Tenant -Mode $SyncMode -Force:$Force
+                                Sync-NAVApp @syncParams
                                 Write-Host "[REMOTE]   Synced successfully"
                             }
                             catch {
@@ -1250,14 +1266,14 @@ try {
                                     elseif ($installedApp.Version -eq $appVersion) {
                                         Write-Host "[REMOTE]   Reinstalling same version..."
                                         Uninstall-NAVApp -ServerInstance $ServerInstance -Name $appName -Publisher $appPublisher -Version $appVersion -Tenant $Tenant -Force -ErrorAction SilentlyContinue
-                                        Install-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.23.0"
+                                        Install-NAVApp @installParams
                                     }
                                     else {
                                         Write-Host "[REMOTE]   Newer version already installed, skipping"
                                     }
                                 }
                                 else {
-                                    Install-NAVApp -ServerInstance BC252 -Name "CI/CD Pipeline Demo" -Publisher "Test" -Version "1.0.23.0"
+                                    Install-NAVApp @installParams
                                 }
                                 Write-Host "[REMOTE]   Installed successfully"
                             }
