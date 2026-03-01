@@ -331,33 +331,48 @@ function Invoke-BCDeployment {
     }
 
     # CRITICAL: Get exact app metadata from BC server after publishing
-    # Query using -Path parameter to get what BC actually published
+    # Query the published app - BC knows what it just published
     Write-DeployLog "  Querying published app metadata from BC server..." -Level Debug
-    $publishedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Path $appFile.FullName -ErrorAction SilentlyContinue
+    
+    # Try querying with -Path and -Tenant
+    $queryParams = @{
+        ServerInstance = $ServerInstance
+        Path = $appFile.FullName
+        ErrorAction = 'SilentlyContinue'
+    }
+    if ($Tenant) {
+        $queryParams.Tenant = $Tenant
+    }
+    
+    $publishedApp = Get-NAVAppInfo @queryParams
     
     if ($publishedApp) {
         $syncName = $publishedApp.Name
         $syncPublisher = $publishedApp.Publisher
         $syncVersion = $publishedApp.Version
-        Write-DeployLog "  Using BC server metadata: $syncName v$syncVersion by $syncPublisher" -Level Debug
+        Write-DeployLog "  Using BC server metadata from -Path query: $syncName v$syncVersion by $syncPublisher" -Level Debug
     } else {
-        # Fallback: try querying by name/version
-        Write-DeployLog "  Warning: Could not query by path, trying name/version query..." -Level Warning
-        $publishedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $info.Name -ErrorAction SilentlyContinue | 
-                        Where-Object { $_.Version -eq $info.Version } | 
-                        Select-Object -First 1
+        # Fallback: Query all published apps and find the one we just published
+        Write-DeployLog "  Warning: -Path query failed, trying to find published app..." -Level Warning
         
-        if ($publishedApp) {
+        # Get all published apps sorted by version (most recent first)
+        $allPublished = Get-NAVAppInfo -ServerInstance $ServerInstance -ErrorAction SilentlyContinue | 
+                        Where-Object { $_.Name -like "*$($info.Name)*" -or $_.Publisher -eq $info.Publisher } |
+                        Sort-Object -Property @{Expression={$_.Version}; Descending=$true}, @{Expression={$_.Name}} -ErrorAction SilentlyContinue
+        
+        if ($allPublished) {
+            # Take the first match (highest version, which should be what we just published)
+            $publishedApp = $allPublished | Select-Object -First 1
             $syncName = $publishedApp.Name
             $syncPublisher = $publishedApp.Publisher
             $syncVersion = $publishedApp.Version
-            Write-DeployLog "  Using fallback metadata: $syncName v$syncVersion by $syncPublisher" -Level Debug
+            Write-DeployLog "  Using BC server metadata from published apps query: $syncName v$syncVersion by $syncPublisher" -Level Debug
         } else {
             # Last resort: use original file metadata
             $syncName = $info.Name
             $syncPublisher = $info.Publisher
             $syncVersion = $info.Version
-            Write-DeployLog "  Warning: Using file metadata (BC query failed): $syncName v$syncVersion by $syncPublisher" -Level Warning
+            Write-DeployLog "  Warning: Could not query BC server, using file metadata: $syncName v$syncVersion by $syncPublisher" -Level Warning
         }
     }
 
