@@ -416,8 +416,7 @@ function Invoke-BCDeployment {
         $installedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Tenant $Tenant -ErrorAction SilentlyContinue | 
             Where-Object { 
                 $_.Name -eq $syncName -and 
-                $_.Publisher -eq $syncPublisher -and 
-                $_.IsInstalled 
+                $_.Publisher -eq $syncPublisher
             } | 
             Sort-Object -Property Version -Descending |
             Select-Object -First 1
@@ -463,7 +462,9 @@ function Remove-OldAppVersions {
     $info = $AppInfo.Info
     
     try {
-        $allVersions = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $info.Name -Publisher $info.Publisher -Tenant $Tenant -ErrorAction SilentlyContinue |
+        # Query tenant apps first to get IsInstalled property
+        $allVersions = Get-NAVAppInfo -ServerInstance $ServerInstance -Tenant $Tenant -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Name -eq $info.Name -and $_.Publisher -eq $info.Publisher } |
                        Sort-Object Version -Descending
         
         if ($allVersions.Count -gt $KeepVersions) {
@@ -820,8 +821,7 @@ function Invoke-RemoteBCDeployment {
                             $installedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Tenant $Tenant -ErrorAction SilentlyContinue | 
                                 Where-Object { 
                                     $_.Name -eq $appName -and 
-                                    $_.Publisher -eq $appPublisher -and 
-                                    $_.IsInstalled 
+                                    $_.Publisher -eq $appPublisher
                                 } |
                                 Sort-Object -Property Version -Descending |
                                 Select-Object -First 1
@@ -852,7 +852,9 @@ function Invoke-RemoteBCDeployment {
                         # Cleanup old versions
                         if ($CleanupOldVersions) {
                             try {
-                                $allVersions = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $appName -Publisher $appPublisher -Tenant $Tenant -ErrorAction SilentlyContinue |
+                                # Query tenant apps first to get IsInstalled property
+                                $allVersions = Get-NAVAppInfo -ServerInstance $ServerInstance -Tenant $Tenant -ErrorAction SilentlyContinue |
+                                               Where-Object { $_.Name -eq $appName -and $_.Publisher -eq $appPublisher } |
                                                Sort-Object Version -Descending
                                 
                                 if ($allVersions.Count -gt $KeepVersions) {
@@ -1282,9 +1284,7 @@ try {
                                 $installedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Tenant $Tenant -ErrorAction SilentlyContinue | 
                                     Where-Object { 
                                         $_.Name -eq $appName -and 
-                                        $_.Publisher -eq $appPublisher -and 
-                                        $_.IsInstalled 
-                                    } |
+                                        $_.Publisher -eq $appPublisher
                                     Sort-Object -Property Version -Descending |
                                     Select-Object -First 1
                                 
@@ -1314,7 +1314,9 @@ try {
                             # Cleanup old versions
                             if ($CleanupOldVersions) {
                                 try {
-                                    $allVersions = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $appName -Publisher $appPublisher -Tenant $Tenant -ErrorAction SilentlyContinue |
+                                    # Query tenant apps first to get IsInstalled property
+                                    $allVersions = Get-NAVAppInfo -ServerInstance $ServerInstance -Tenant $Tenant -ErrorAction SilentlyContinue |
+                                                   Where-Object { $_.Name -eq $appName -and $_.Publisher -eq $appPublisher } |
                                                    Sort-Object Version -Descending
                                     
                                     if ($allVersions.Count -gt $KeepVersions) {
