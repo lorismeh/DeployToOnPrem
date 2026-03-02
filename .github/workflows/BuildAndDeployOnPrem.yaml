@@ -69,11 +69,28 @@ jobs:
           
           # Get artifact URL from app.json application version
           $appJson = Get-Content "app.json" -Raw | ConvertFrom-Json
-          $bcVersion = $appJson.application
-          Write-Host "BC Application Version: $bcVersion"
+          $bcVersionFull = $appJson.application
+          Write-Host "BC Application Version from app.json: $bcVersionFull"
           
-          # Get artifact URL for on-premise
-          $artifactUrl = Get-BCArtifactUrl -type OnPrem -version $bcVersion -country "w1" -select Latest
+          # Extract major version (e.g., "25.0.0.0" -> "25.0")
+          $versionParts = $bcVersionFull.Split('.')
+          $bcVersion = "$($versionParts[0]).$($versionParts[1])"
+          Write-Host "BC Version for artifact lookup: $bcVersion"
+          
+          # Try to get OnPrem artifact URL
+          Write-Host "Searching for OnPrem artifacts..."
+          $artifactUrl = Get-BCArtifactUrl -type OnPrem -version $bcVersion -country "w1" -select Latest -accept_insiderEula
+          
+          # If OnPrem not found, try Sandbox (same artifacts, different storage)
+          if ([string]::IsNullOrEmpty($artifactUrl)) {
+            Write-Host "OnPrem artifacts not found, trying Sandbox artifacts..."
+            $artifactUrl = Get-BCArtifactUrl -type Sandbox -version $bcVersion -country "w1" -select Latest -accept_insiderEula
+          }
+          
+          if ([string]::IsNullOrEmpty($artifactUrl)) {
+            throw "Could not find BC artifacts for version $bcVersion. Available versions: $(Get-BCArtifactUrl -select All -type Sandbox -country w1 | Select-Object -First 5)"
+          }
+          
           Write-Host "Artifact URL: $artifactUrl"
           
           # Download artifacts
