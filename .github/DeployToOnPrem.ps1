@@ -412,13 +412,15 @@ function Invoke-BCDeployment {
     }
     
     try {
-        # Check if any version is already installed using the correct BC server metadata
-        $allApps = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $syncName -Publisher $syncPublisher -ErrorAction SilentlyContinue
-        
-        # Then filter for installed apps on the specific tenant
-        $installedApp = $allApps | Where-Object { 
-            $_.IsInstalled -and ($_.Tenant -eq $Tenant -or $Tenant -eq 'default' -or [string]::IsNullOrEmpty($Tenant))
-        } | Select-Object -First 1
+        # Check if any version is already installed - MUST query with -Tenant to get IsInstalled property
+        $installedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Tenant $Tenant -ErrorAction SilentlyContinue | 
+            Where-Object { 
+                $_.Name -eq $syncName -and 
+                $_.Publisher -eq $syncPublisher -and 
+                $_.IsInstalled 
+            } | 
+            Sort-Object -Property Version -Descending |
+            Select-Object -First 1
         
         if ($installedApp) {
             if ($installedApp.Version -lt $syncVersion) {
@@ -815,8 +817,14 @@ function Invoke-RemoteBCDeployment {
                         }
                         
                         try {
-                            $installedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $appName -Publisher $appPublisher -Tenant $Tenant -ErrorAction SilentlyContinue | 
-                                            Where-Object { $_.IsInstalled }
+                            $installedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Tenant $Tenant -ErrorAction SilentlyContinue | 
+                                Where-Object { 
+                                    $_.Name -eq $appName -and 
+                                    $_.Publisher -eq $appPublisher -and 
+                                    $_.IsInstalled 
+                                } |
+                                Sort-Object -Property Version -Descending |
+                                Select-Object -First 1
                             
                             if ($installedApp) {
                                 if ($installedApp.Version -lt $appVersion) {
@@ -1270,8 +1278,15 @@ try {
                             }
                             
                             try {
-                                $installedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Name $appName -Publisher $appPublisher -Tenant $Tenant -ErrorAction SilentlyContinue | 
-                                                Where-Object { $_.IsInstalled }
+                                # Query tenant-installed apps - Tenant parameter must come first to get IsInstalled property
+                                $installedApp = Get-NAVAppInfo -ServerInstance $ServerInstance -Tenant $Tenant -ErrorAction SilentlyContinue | 
+                                    Where-Object { 
+                                        $_.Name -eq $appName -and 
+                                        $_.Publisher -eq $appPublisher -and 
+                                        $_.IsInstalled 
+                                    } |
+                                    Sort-Object -Property Version -Descending |
+                                    Select-Object -First 1
                                 
                                 if ($installedApp) {
                                     if ($installedApp.Version -lt $appVersion) {
