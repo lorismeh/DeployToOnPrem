@@ -2,12 +2,13 @@ name: ' CI/CD'
 
 on:
   workflow_dispatch:
-  push:
-    paths-ignore:
-      - '**.md'
-      - '.github/workflows/*.yaml'
-      - '!.github/workflows/CICD.yaml'
-    branches: [ 'main', 'release/*', 'feature/*' ]
+  # AL-Go CI/CD disabled - using custom BuildAndDeployOnPrem.yaml instead
+  # push:
+  #   paths-ignore:
+  #     - '**.md'
+  #     - '.github/workflows/*.yaml'
+  #     - '!.github/workflows/CICD.yaml'
+  #   branches: [ 'main', 'release/*', 'feature/*' ]
 
 defaults:
   run:
