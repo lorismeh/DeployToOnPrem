@@ -1285,6 +1285,7 @@ try {
                                     Where-Object { 
                                         $_.Name -eq $appName -and 
                                         $_.Publisher -eq $appPublisher
+                                        } |
                                     Sort-Object -Property Version -Descending |
                                     Select-Object -First 1
                                 
