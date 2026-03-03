@@ -238,8 +238,16 @@ jobs:
             $containerName = "bc${{ matrix.projectName }}-$env:GITHUB_RUN_ID".ToLower() -replace '[^a-z0-9\-]', ''
             Write-Host "Container name: $containerName"
             
+            # Resolve project folder to absolute path
+            if ($projectFolder -eq ".") {
+              $projectFolder = $pwd.Path
+            } else {
+              $projectFolder = Resolve-Path $projectFolder
+            }
+            Write-Host "Project folder (absolute): $projectFolder"
+            
             # Create BC container with AL-Go-style parameters
-            Write-Host "Creating BC container..."
+            Write-Host "Creating BC container with shared folders..."
             $credential = New-Object PSCredential -ArgumentList 'admin', (ConvertTo-SecureString -String 'P@ss' -AsPlainText -Force)
             
             New-BcContainer `
@@ -255,17 +263,19 @@ jobs:
               -includeAL `
               -doNotExportObjectsToText `
               -shortcuts None `
-              -useBestContainerOS
+              -useBestContainerOS `
+              -additionalParameters @("--volume", "${projectFolder}:c:\app")
             
             Write-Host "✓ Container created successfully"
             
             # Compile app in container (AL-Go approach)
+            # Note: Use c:\app path inside container where project is mounted
             Write-Host "Compiling AL app..."
             Compile-AppInBcContainer `
               -containerName $containerName `
-              -appProjectFolder $projectFolder `
-              -appOutputFolder $outputFolder `
-              -appSymbolsFolder (Join-Path $projectFolder ".alpackages") `
+              -appProjectFolder "c:\app" `
+              -appOutputFolder "c:\app\.output" `
+              -appSymbolsFolder "c:\app\.alpackages" `
               -credential $credential `
               -updateSymbols `
               -CopyAppToSymbolsFolder `
@@ -276,6 +286,7 @@ jobs:
               
             Write-Host "✓ Compilation successful!"
             
+            # Output is already in .output folder (mounted from host)
             # Ensure consistent naming
             $compiledApp = Get-ChildItem -Path $outputFolder -Filter "*.app" | Select-Object -First 1
             if ($compiledApp) {
