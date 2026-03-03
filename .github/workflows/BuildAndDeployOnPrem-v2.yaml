@@ -246,7 +246,7 @@ jobs:
             }
             Write-Host "Project folder (absolute): $projectFolder"
             
-            # Create BC container with AL-Go-style parameters
+            # Create BC container
             Write-Host "Creating BC container with shared folders..."
             $credential = New-Object PSCredential -ArgumentList 'admin', (ConvertTo-SecureString -String 'P@ss' -AsPlainText -Force)
             
@@ -264,18 +264,18 @@ jobs:
               -doNotExportObjectsToText `
               -shortcuts None `
               -useBestContainerOS `
-              -additionalParameters @("--volume", "${projectFolder}:c:\app")
+              -myFolder $projectFolder
             
             Write-Host "✓ Container created successfully"
             
-            # Compile app in container (AL-Go approach)
-            # Note: Use c:\app path inside container where project is mounted
+            # Compile app in container
+            # BcContainerHelper automatically maps myFolder to c:\sources in container
             Write-Host "Compiling AL app..."
             Compile-AppInBcContainer `
               -containerName $containerName `
-              -appProjectFolder "c:\app" `
-              -appOutputFolder "c:\app\.output" `
-              -appSymbolsFolder "c:\app\.alpackages" `
+              -appProjectFolder $projectFolder `
+              -appOutputFolder $outputFolder `
+              -appSymbolsFolder (Join-Path $projectFolder ".alpackages") `
               -credential $credential `
               -updateSymbols `
               -CopyAppToSymbolsFolder `
@@ -286,7 +286,6 @@ jobs:
               
             Write-Host "✓ Compilation successful!"
             
-            # Output is already in .output folder (mounted from host)
             # Ensure consistent naming
             $compiledApp = Get-ChildItem -Path $outputFolder -Filter "*.app" | Select-Object -First 1
             if ($compiledApp) {
