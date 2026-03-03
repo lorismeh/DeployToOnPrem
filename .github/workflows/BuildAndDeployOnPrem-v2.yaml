@@ -175,8 +175,8 @@ jobs:
           echo "bcVersion=$bcVersion" >> $env:GITHUB_OUTPUT
           echo "projectFolder=$projectFolder" >> $env:GITHUB_OUTPUT
 
-      - name: Get Business Central Artifacts
-        id: getArtifacts
+      - name: Download Business Central Artifacts
+        id: downloadArtifacts
         run: |
           # Install BcContainerHelper
           Write-Host "Installing BcContainerHelper..."
@@ -200,14 +200,27 @@ jobs:
           }
           
           Write-Host "✓ Found artifact URL: $artifactUrl"
+          
+          # Download artifacts to extract compiler
+          $artifactsFolder = Join-Path ([System.IO.Path]::GetTempPath()) "BCOnPremArtifacts"
+          if (Test-Path $artifactsFolder) { Remove-Item $artifactsFolder -Recurse -Force }
+          New-Item -Path $artifactsFolder -ItemType Directory | Out-Null
+          
+          Write-Host "Downloading artifacts to: $artifactsFolder"
+          Download-Artifacts -artifactUrl $artifactUrl -basePath $artifactsFolder -includePlatform
+          
+          Write-Host "✓ Artifacts downloaded successfully"
+          
           echo "artifactUrl=$artifactUrl" >> $env:GITHUB_OUTPUT
+          echo "artifactsFolder=$artifactsFolder" >> $env:GITHUB_OUTPUT
 
       - name: Compile OnPrem AL App
         id: build
         run: |
           Import-Module BcContainerHelper
           
-          $artifactUrl = "${{ steps.getArtifacts.outputs.artifactUrl }}"
+          $artifactUrl = "${{ steps.downloadArtifacts.outputs.artifactUrl }}"
+          $artifactsFolder = "${{ steps.downloadArtifacts.outputs.artifactsFolder }}"
           $projectFolder = "${{ steps.readProjectSettings.outputs.projectFolder }}"
           $appName = "${{ steps.readProjectSettings.outputs.appName }}"
           $appVersion = "${{ steps.readProjectSettings.outputs.appVersion }}"
@@ -217,6 +230,7 @@ jobs:
           Write-Host "========================================="
           Write-Host "Project: ${{ matrix.projectName }}"
           Write-Host "Artifact: $artifactUrl"
+          Write-Host "Artifacts Folder: $artifactsFolder"
           Write-Host ""
           
           # Output folder (AL-Go convention)
@@ -227,14 +241,23 @@ jobs:
           # App file naming (AL-Go convention: appName_appVersion.app)
           $appFileName = "${appName}_${appVersion}.app"
           
+          # Find compiler folder
+          $compilerFolder = Get-ChildItem -Path $artifactsFolder -Filter "compiler" -Recurse -Directory | Select-Object -First 1
+          if (-not $compilerFolder) {
+            throw "Compiler folder not found in downloaded artifacts"
+          }
+          
+          Write-Host "Compiler folder: $($compilerFolder.FullName)"
+          Write-Host ""
+          
           Write-Host "Compiling using BcContainerHelper..."
           try {
-            # Compile using BcContainerHelper (OnPrem-compatible)
+            # Compile using BcContainerHelper with compiler folder
             Compile-AppWithBcCompilerFolder `
+              -compilerFolder $compilerFolder.FullName `
               -appProjectFolder $projectFolder `
               -appOutputFolder $outputFolder `
               -appSymbolsFolder (Join-Path $projectFolder ".alpackages") `
-              -ArtifactUrl $artifactUrl `
               -EnableCodeCop:$false `
               -EnableAppSourceCop:$false `
               -EnablePerTenantExtensionCop:$false `
