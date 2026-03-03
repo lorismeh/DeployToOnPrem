@@ -232,29 +232,48 @@ jobs:
           # App file naming (AL-Go convention: appName_appVersion.app)
           $appFileName = "${appName}_${appVersion}.app"
           
-          Write-Host "Using BcContainerHelper to compile with artifacts..."
+          Write-Host "Compiling using AL-Go's container approach..."
           try {
-            # Use Run-AlCompiler which handles artifact download internally
-            # This is the recommended approach for CI/CD without containers
-            Write-Host "Compiling AL app with Run-AlCompiler..."
+            # Generate unique container name (AL-Go pattern)
+            $containerName = "bc${{ matrix.projectName }}-$env:GITHUB_RUN_ID".ToLower() -replace '[^a-z0-9\-]', ''
+            Write-Host "Container name: $containerName"
             
-            # Get dependencies (if any)
-            $dependencies = @()
-            if (Test-Path (Join-Path $projectFolder ".alpackages")) {
-              $dependencies = Get-ChildItem -Path (Join-Path $projectFolder ".alpackages") -Filter "*.app" | ForEach-Object { $_.FullName }
-            }
+            # Create BC container with AL-Go-style parameters
+            Write-Host "Creating BC container..."
+            $credential = New-Object PSCredential -ArgumentList 'admin', (ConvertTo-SecureString -String 'P@ss' -AsPlainText -Force)
             
-            Run-AlCompiler `
-              -Path $projectFolder `
+            New-BcContainer `
+              -accept_eula `
+              -accept_outdated `
+              -containerName $containerName `
               -artifactUrl $artifactUrl `
-              -outputPath $outputFolder `
+              -auth NavUserPassword `
+              -credential $credential `
+              -updateHosts `
+              -memoryLimit 8G `
+              -isolation hyperv `
+              -includeAL `
+              -doNotExportObjectsToText `
+              -shortcuts None `
+              -useBestContainerOS
+            
+            Write-Host "✓ Container created successfully"
+            
+            # Compile app in container (AL-Go approach)
+            Write-Host "Compiling AL app..."
+            Compile-AppInBcContainer `
+              -containerName $containerName `
+              -appProjectFolder $projectFolder `
+              -appOutputFolder $outputFolder `
+              -appSymbolsFolder (Join-Path $projectFolder ".alpackages") `
+              -credential $credential `
+              -updateSymbols `
+              -CopyAppToSymbolsFolder `
               -EnableCodeCop:$false `
               -EnableAppSourceCop:$false `
               -EnablePerTenantExtensionCop:$false `
-              -EnableUICop:$false `
-              -updateDependencies
+              -EnableUICop:$false
               
-            Write-Host ""
             Write-Host "✓ Compilation successful!"
             
             # Ensure consistent naming
@@ -274,6 +293,13 @@ jobs:
             Write-Host "Error during compilation: $_" -ForegroundColor Red
             Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
             throw
+          }
+          finally {
+            # Clean up container (AL-Go always cleans up)
+            if ($containerName) {
+              Write-Host "Cleaning up container $containerName..."
+              Remove-BcContainer -containerName $containerName -ErrorAction SilentlyContinue
+            }
           }
           
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
