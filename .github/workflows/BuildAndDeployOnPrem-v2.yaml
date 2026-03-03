@@ -277,13 +277,16 @@ jobs:
             
             # Run-AlPipeline creates .app files in the buildArtifactFolder (.output)
             # Ensure consistent naming (AL-Go convention: appName_appVersion.app)
+            # Remove invalid filename characters from app name
+            $appFileNameSafe = "${appName}_${appVersion}.app" -replace '[\\/:*?"<>|]', '_'
+            
             $compiledApp = Get-ChildItem -Path $outputFolder -Filter "*.app" | Select-Object -First 1
             if ($compiledApp) {
-              if ($compiledApp.Name -ne $appFileName) {
-                Write-Host "Renaming $($compiledApp.Name) to $appFileName"
-                Rename-Item -Path $compiledApp.FullName -NewName $appFileName
+              if ($compiledApp.Name -ne $appFileNameSafe) {
+                Write-Host "Renaming $($compiledApp.Name) to $appFileNameSafe"
+                Rename-Item -Path $compiledApp.FullName -NewName $appFileNameSafe
               }
-              Write-Host "App file: $appFileName"
+              Write-Host "App file: $appFileNameSafe"
             }
             else {
               throw "No .app file was created in output folder"
@@ -301,7 +304,7 @@ jobs:
           }
           
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
-          echo "appFileName=$appFileName" >> $env:GITHUB_OUTPUT
+          echo "appFileName=$appFileNameSafe" >> $env:GITHUB_OUTPUT
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
