@@ -91,17 +91,9 @@ jobs:
             throw "Could not find BC artifacts for version $bcVersion. Available versions: $(Get-BCArtifactUrl -select All -type Sandbox -country w1 | Select-Object -First 5)"
           }
           
-          Write-Host "Artifact URL: $artifactUrl"
+          Write-Host "✓ Found artifact URL: $artifactUrl"
           
-          # Download artifacts
-          $artifactsFolder = Join-Path $env:TEMP "BCOnPremArtifacts"
-          if (Test-Path $artifactsFolder) { Remove-Item $artifactsFolder -Recurse -Force }
-          New-Item -Path $artifactsFolder -ItemType Directory | Out-Null
           
-          Write-Host "Downloading BC artifacts to: $artifactsFolder"
-          Download-Artifacts -artifactUrl $artifactUrl -includePlatform -basePath $artifactsFolder
-          
-          echo "artifactsFolder=$artifactsFolder" >> $env:GITHUB_OUTPUT
           echo "artifactUrl=$artifactUrl" >> $env:GITHUB_OUTPUT
 
       - name: Compile AL App
@@ -109,74 +101,68 @@ jobs:
         run: |
           Import-Module BcContainerHelper
           
-          $artifactsFolder = "${{ steps.downloadArtifacts.outputs.artifactsFolder }}"
+          $artifactUrl = "${{ steps.downloadArtifacts.outputs.artifactUrl }}"
           $appJson = Get-Content "app.json" -Raw | ConvertFrom-Json
           
-          # Setup compiler
-          $platformPath = (Get-ChildItem -Path $artifactsFolder -Filter "platform" -Directory -Recurse | Select-Object -First 1).FullName
-          $compilerPath = Join-Path $platformPath "compiler"
-          $alcPath = Join-Path $compilerPath "alc.exe"
+          Write-Host "========================================="
+          Write-Host "  Compiling AL Application"
+          Write-Host "========================================="
+          Write-Host "App: $($appJson.name)"
+          Write-Host "Version: $($appJson.version)"
+          Write-Host "Publisher: $($appJson.publisher)"
+          Write-Host "Artifact: $artifactUrl"
+          Write-Host ""
           
-          if (-not (Test-Path $alcPath)) {
-            throw "AL Compiler not found at: $alcPath"
-          }
-          
-          Write-Host "Using AL Compiler: $alcPath"
-          
-          # Prepare symbol packages folder
-          $symbolsFolder = ".alpackages"
-          if (-not (Test-Path $symbolsFolder)) {
-            New-Item -Path $symbolsFolder -ItemType Directory | Out-Null
-          }
-          
-          # Get Application symbols
-          $applicationPath = (Get-ChildItem -Path $artifactsFolder -Filter "Applications.*" -Directory -Recurse | Select-Object -First 1).FullName
-          if ($applicationPath) {
-            Write-Host "Copying Application symbols from: $applicationPath"
-            Get-ChildItem -Path $applicationPath -Filter "*.app" | Copy-Item -Destination $symbolsFolder -Force
-          }
-          
-          # Get System symbols
-          $systemAppPath = Join-Path $platformPath "System.app"
-          if (Test-Path $systemAppPath) {
-            Write-Host "Copying System.app"
-            Copy-Item $systemAppPath -Destination $symbolsFolder -Force
-          }
-          
-          # Output folder
+          # Output folder for compiled app
           $outputFolder = ".output"
           if (Test-Path $outputFolder) { Remove-Item $outputFolder -Recurse -Force }
           New-Item -Path $outputFolder -ItemType Directory | Out-Null
           
-          # Build the app with OnPrem target
+          # App file name
           $appName = $appJson.name
           $appVersion = $appJson.version
           $appFileName = "${appName}_${appVersion}.app"
-          $outputPath = Join-Path $outputFolder $appFileName
+          $outputPath = Join-Path (Resolve-Path $outputFolder) $appFileName
           
-          Write-Host "Compiling AL app: $appName v$appVersion"
-          Write-Host "Output: $outputPath"
+          Write-Host "Output path: $outputPath"
+          Write-Host ""
           
-          # Compile command
-          $compileArgs = @(
-            "/project:."
-            "/packagecachepath:$symbolsFolder"
-            "/out:$outputPath"
-          )
-          
-          Write-Host "Running: $alcPath $($compileArgs -join ' ')"
-          & $alcPath $compileArgs
-          
-          if ($LASTEXITCODE -ne 0) {
-            throw "Compilation failed with exit code: $LASTEXITCODE"
+          # Use BcContainerHelper's Compile-AppInBcContainer which handles artifact extraction
+          Write-Host "Compiling using BcContainerHelper..."
+          try {
+            # Compile without container using artifact URL directly
+            Compile-AppWithBcCompilerFolder `
+              -appProjectFolder "." `
+              -appOutputFolder $outputFolder `
+              -appSymbolsFolder ".alpackages" `
+              -ArtifactUrl $artifactUrl `
+              -EnableCodeCop:$false `
+              -EnableAppSourceCop:$false `
+              -EnablePerTenantExtensionCop:$false `
+              -EnableUICop:$false `
+              -UpdateSymbols
+              
+            Write-Host ""
+            Write-Host "✓ Compilation successful!"
+            
+            # Rename output file to expected name (BcContainerHelper might use different naming)
+            $compiledApp = Get-ChildItem -Path $outputFolder -Filter "*.app" | Select-Object -First 1
+            if ($compiledApp) {
+              if ($compiledApp.Name -ne $appFileName) {
+                Write-Host "Renaming $($compiledApp.Name) to $appFileName"
+                Rename-Item -Path $compiledApp.FullName -NewName $appFileName
+              }
+              Write-Host "App file: $appFileName"
+            }
+            else {
+              throw "No .app file was created in output folder"
+            }
           }
-          
-          if (-not (Test-Path $outputPath)) {
-            throw "App file was not created: $outputPath"
+          catch {
+            Write-Host "Error during compilation: $_" -ForegroundColor Red
+            Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
+            throw
           }
-          
-          Write-Host "✓ Compilation successful!"
-          Write-Host "App file: $outputPath"
           
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
           echo "appFileName=$appFileName" >> $env:GITHUB_OUTPUT
