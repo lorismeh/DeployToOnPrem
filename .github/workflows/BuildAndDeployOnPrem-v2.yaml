@@ -1,0 +1,410 @@
+name: Build and Deploy to OnPrem (AL-Go Pattern)
+
+# ========================================
+# AL-Go-Inspired Architecture for OnPrem
+# ========================================
+# This workflow combines AL-Go's proven patterns with OnPrem-specific compilation requirements.
+#
+# Architecture:
+# 1. Initialization - Uses AL-Go actions for settings, project detection, environment management
+# 2. BuildOnPrem - Custom OnPrem compilation with BcContainerHelper (bypasses AL-Go's PTE0005)
+# 3. Deploy - Uses AL-Go environment patterns with existing DeployToOnPrem.ps1
+#
+# Benefits over original BuildAndDeployOnPrem.yaml:
+# - Leverages AL-Go's settings management (AL-Go-Settings.json, environment variables)
+# - Automatic project detection (multi-project support if needed)
+# - Environment matrix from AL-Go configuration
+# - Proper telemetry and workflow initialization
+# - Follows AL-Go naming and artifact conventions
+# ========================================
+
+on:
+  push:
+    branches: 
+      - main
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+    inputs:
+      skipDeploy:
+        description: 'Skip deployment (build only)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+  id-token: write
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  workflowDepth: 1
+  ALGoOrgSettings: ${{ vars.ALGoOrgSettings }}
+  ALGoRepoSettings: ${{ vars.ALGoRepoSettings }}
+
+jobs:
+  # ========================================
+  # Job 1: Initialization (AL-Go Pattern)
+  # ========================================
+  # Leverages AL-Go actions for:
+  # - Settings management
+  # - Project detection
+  # - Environment configuration
+  # ========================================
+  Initialization:
+    name: Initialize OnPrem Workflow
+    runs-on: windows-latest
+    outputs:
+      telemetryScopeJson: ${{ steps.init.outputs.telemetryScopeJson }}
+      environmentsMatrixJson: ${{ steps.DetermineDeploymentEnvironments.outputs.EnvironmentsMatrixJson }}
+      environmentCount: ${{ steps.DetermineDeploymentEnvironments.outputs.EnvironmentCount }}
+      deploymentEnvironmentsJson: ${{ steps.DetermineDeploymentEnvironments.outputs.DeploymentEnvironmentsJson }}
+      githubRunner: ${{ steps.ReadSettings.outputs.GitHubRunnerJson }}
+      githubRunnerShell: ${{ steps.ReadSettings.outputs.GitHubRunnerShell }}
+      projects: ${{ steps.determineProjectsToBuild.outputs.ProjectsJson }}
+      projectDependenciesJson: ${{ steps.determineProjectsToBuild.outputs.ProjectDependenciesJson }}
+      buildOrderJson: ${{ steps.determineProjectsToBuild.outputs.BuildOrderJson }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Initialize the workflow
+        id: init
+        uses: microsoft/AL-Go-Actions/WorkflowInitialize@v8.0
+        with:
+          shell: powershell
+
+      - name: Read settings
+        id: ReadSettings
+        uses: microsoft/AL-Go-Actions/ReadSettings@v8.0
+        with:
+          shell: powershell
+
+      - name: Determine Projects To Build
+        id: determineProjectsToBuild
+        uses: microsoft/AL-Go-Actions/DetermineProjectsToBuild@v8.0
+        with:
+          shell: powershell
+          maxBuildDepth: ${{ env.workflowDepth }}
+
+      - name: Determine Deployment Environments
+        id: DetermineDeploymentEnvironments
+        uses: microsoft/AL-Go-Actions/DetermineDeploymentEnvironments@v8.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          shell: powershell
+          getEnvironments: '*'
+          type: 'CD'
+
+  # ========================================
+  # Job 2: BuildOnPrem (Custom OnPrem Compilation)
+  # ========================================
+  # Uses AL-Go patterns but implements custom compilation:
+  # - Respects AL-Go project matrix
+  # - Uses BcContainerHelper for OnPrem artifacts
+  # - Bypasses AL-Go's PTE0005 validation
+  # - Follows AL-Go artifact naming conventions
+  # ========================================
+  BuildOnPrem:
+    name: Build ${{ matrix.projectName }} (OnPrem)
+    needs: [ Initialization ]
+    if: (!failure()) && (!cancelled()) && fromJson(needs.Initialization.outputs.buildOrderJson)[0].projectsCount > 0
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.Initialization.outputs.buildOrderJson)[0].buildDimensions }}
+      fail-fast: false
+    runs-on: ${{ fromJson(matrix.githubRunner) }}
+    defaults:
+      run:
+        shell: ${{ matrix.githubRunnerShell }}
+    
+    outputs:
+      appVersion: ${{ steps.build.outputs.appVersion }}
+      appFileName: ${{ steps.build.outputs.appFileName }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Read Project Settings
+        id: readProjectSettings
+        run: |
+          # Read app.json from project folder (AL-Go supports multi-project repos)
+          $projectFolder = "${{ matrix.project }}"
+          if ($projectFolder -eq ".") {
+            $appJsonPath = "app.json"
+          } else {
+            $appJsonPath = Join-Path $projectFolder "app.json"
+          }
+          
+          $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+          $appName = $appJson.name
+          $appVersion = $appJson.version
+          $appPublisher = $appJson.publisher
+          $bcVersionFull = $appJson.application
+          
+          Write-Host "========================================="
+          Write-Host "  Project: ${{ matrix.projectName }}"
+          Write-Host "========================================="
+          Write-Host "App Name: $appName"
+          Write-Host "App Version: $appVersion"
+          Write-Host "App Publisher: $appPublisher"
+          Write-Host "BC Version: $bcVersionFull"
+          Write-Host "Target: $($appJson.target)"
+          Write-Host ""
+          
+          # Extract major.minor version for artifact lookup
+          $versionParts = $bcVersionFull.Split('.')
+          $bcVersion = "$($versionParts[0]).$($versionParts[1])"
+          
+          echo "appName=$appName" >> $env:GITHUB_OUTPUT
+          echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
+          echo "appPublisher=$appPublisher" >> $env:GITHUB_OUTPUT
+          echo "bcVersion=$bcVersion" >> $env:GITHUB_OUTPUT
+          echo "projectFolder=$projectFolder" >> $env:GITHUB_OUTPUT
+
+      - name: Get Business Central Artifacts
+        id: getArtifacts
+        run: |
+          # Install BcContainerHelper
+          Write-Host "Installing BcContainerHelper..."
+          Install-Module -Name BcContainerHelper -Force -AllowClobber
+          Import-Module BcContainerHelper
+          
+          $bcVersion = "${{ steps.readProjectSettings.outputs.bcVersion }}"
+          Write-Host "BC Version for artifact lookup: $bcVersion"
+          
+          # Try OnPrem artifacts first, fallback to Sandbox
+          Write-Host "Searching for OnPrem artifacts..."
+          $artifactUrl = Get-BCArtifactUrl -type OnPrem -version $bcVersion -country "w1" -select Latest -accept_insiderEula
+          
+          if ([string]::IsNullOrEmpty($artifactUrl)) {
+            Write-Host "OnPrem artifacts not found, trying Sandbox artifacts..."
+            $artifactUrl = Get-BCArtifactUrl -type Sandbox -version $bcVersion -country "w1" -select Latest -accept_insiderEula
+          }
+          
+          if ([string]::IsNullOrEmpty($artifactUrl)) {
+            throw "Could not find BC artifacts for version $bcVersion"
+          }
+          
+          Write-Host "✓ Found artifact URL: $artifactUrl"
+          echo "artifactUrl=$artifactUrl" >> $env:GITHUB_OUTPUT
+
+      - name: Compile OnPrem AL App
+        id: build
+        run: |
+          Import-Module BcContainerHelper
+          
+          $artifactUrl = "${{ steps.getArtifacts.outputs.artifactUrl }}"
+          $projectFolder = "${{ steps.readProjectSettings.outputs.projectFolder }}"
+          $appName = "${{ steps.readProjectSettings.outputs.appName }}"
+          $appVersion = "${{ steps.readProjectSettings.outputs.appVersion }}"
+          
+          Write-Host "========================================="
+          Write-Host "  Compiling OnPrem AL Application"
+          Write-Host "========================================="
+          Write-Host "Project: ${{ matrix.projectName }}"
+          Write-Host "Artifact: $artifactUrl"
+          Write-Host ""
+          
+          # Output folder (AL-Go convention)
+          $outputFolder = ".output"
+          if (Test-Path $outputFolder) { Remove-Item $outputFolder -Recurse -Force }
+          New-Item -Path $outputFolder -ItemType Directory | Out-Null
+          
+          # App file naming (AL-Go convention: appName_appVersion.app)
+          $appFileName = "${appName}_${appVersion}.app"
+          
+          Write-Host "Compiling using BcContainerHelper..."
+          try {
+            # Compile using BcContainerHelper (OnPrem-compatible)
+            Compile-AppWithBcCompilerFolder `
+              -appProjectFolder $projectFolder `
+              -appOutputFolder $outputFolder `
+              -appSymbolsFolder (Join-Path $projectFolder ".alpackages") `
+              -ArtifactUrl $artifactUrl `
+              -EnableCodeCop:$false `
+              -EnableAppSourceCop:$false `
+              -EnablePerTenantExtensionCop:$false `
+              -EnableUICop:$false `
+              -UpdateSymbols
+              
+            Write-Host ""
+            Write-Host "✓ Compilation successful!"
+            
+            # Ensure consistent naming
+            $compiledApp = Get-ChildItem -Path $outputFolder -Filter "*.app" | Select-Object -First 1
+            if ($compiledApp) {
+              if ($compiledApp.Name -ne $appFileName) {
+                Write-Host "Renaming $($compiledApp.Name) to $appFileName"
+                Rename-Item -Path $compiledApp.FullName -NewName $appFileName
+              }
+              Write-Host "App file: $appFileName"
+            }
+            else {
+              throw "No .app file was created in output folder"
+            }
+          }
+          catch {
+            Write-Host "Error during compilation: $_" -ForegroundColor Red
+            Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
+            throw
+          }
+          
+          echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
+          echo "appFileName=$appFileName" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.projectName }}-Apps-${{ matrix.buildMode }}
+          path: .output/*.app
+          retention-days: 7
+          if-no-files-found: error
+
+  # ========================================
+  # Job 3: Deploy (AL-Go Environment Pattern)
+  # ========================================
+  # Uses AL-Go patterns for deployment:
+  # - Environment matrix from AL-Go configuration
+  # - Environment protection rules
+  # - Existing DeployToOnPrem.ps1 script
+  # ========================================
+  Deploy:
+    name: Deploy to ${{ matrix.environment }}
+    needs: [ Initialization, BuildOnPrem ]
+    if: (!cancelled()) && (needs.BuildOnPrem.result == 'success' || needs.BuildOnPrem.result == 'skipped') && needs.Initialization.outputs.environmentCount > 0 && !inputs.skipDeploy
+    strategy: ${{ fromJson(needs.Initialization.outputs.environmentsMatrixJson) }}
+    runs-on: ${{ fromJson(matrix.os) }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    environment:
+      name: ${{ matrix.environment }}
+    env:
+      ALGoEnvSettings: ${{ vars.ALGoEnvironmentSettings }}
+      ALGoEnvName: ${{ matrix.environment }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .artifacts
+
+      - name: List Downloaded Artifacts
+        run: |
+          Write-Host "Downloaded artifacts:"
+          Get-ChildItem -Path ".artifacts" -Recurse -File | ForEach-Object {
+            Write-Host "  - $($_.FullName)"
+          }
+
+      - name: EnvName
+        id: envName
+        run: |
+          $envName = '${{ matrix.environment }}'.split(' ')[0]
+          echo "envName=$envName" >> $env:GITHUB_OUTPUT
+
+      - name: Read Secrets
+        id: ReadSecrets
+        uses: microsoft/AL-Go-Actions/ReadSecrets@v8.0
+        with:
+          shell: ${{ matrix.shell }}
+          gitHubSecrets: ${{ toJson(secrets) }}
+          getSecrets: '${{ steps.envName.outputs.envName }}-AuthContext,${{ steps.envName.outputs.envName }}_AuthContext,AuthContext'
+
+      - name: Deploy to Business Central OnPrem
+        env:
+          Secrets: '${{ steps.ReadSecrets.outputs.Secrets }}'
+        run: |
+          Write-Host "========================================="
+          Write-Host "  Deploying to BC OnPrem Server"
+          Write-Host "  Environment: ${{ matrix.environment }}"
+          Write-Host "========================================="
+          
+          # Parse secrets (AL-Go pattern)
+          $secrets = $env:Secrets | ConvertFrom-Json
+          $authContextJson = $secrets.AuthContext
+          
+          if (-not $authContextJson) {
+            throw "AuthContext secret not found for environment ${{ matrix.environment }}"
+          }
+          
+          # Get all app files from artifacts
+          $appFiles = Get-ChildItem -Path ".artifacts" -Filter "*.app" -File -Recurse
+          
+          if ($appFiles.Count -eq 0) {
+            throw "No app files found in artifacts folder"
+          }
+          
+          Write-Host "Apps to deploy:"
+          $appFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
+          Write-Host ""
+          
+          # Prepare deployment parameters (AL-Go convention)
+          $deploymentParams = @{
+            type = "CD"
+            apps = $appFiles.FullName
+            EnvironmentType = "OnPrem"
+            EnvironmentName = "${{ matrix.environment }}"
+            AuthContext = $authContextJson
+          }
+          
+          # Execute deployment script
+          Write-Host "Executing deployment script..."
+          . ".github/DeployToOnPrem.ps1" -parameters $deploymentParams
+          
+          Write-Host ""
+          Write-Host "✓ Deployment completed successfully!"
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          $appVersion = "${{ needs.BuildOnPrem.outputs.appVersion }}"
+          $appFileName = "${{ needs.BuildOnPrem.outputs.appFileName }}"
+          
+          Write-Host "========================================="
+          Write-Host "  DEPLOYMENT SUMMARY"
+          Write-Host "========================================="
+          Write-Host "App: $appFileName"
+          Write-Host "Version: $appVersion"
+          Write-Host "Environment: ${{ matrix.environment }}"
+          Write-Host "Status: ${{ job.status }}"
+          Write-Host "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+          Write-Host "========================================="
+
+  # ========================================
+  # Job 4: PostProcess (AL-Go Pattern)
+  # ========================================
+  # Optional: Telemetry and workflow cleanup
+  # ========================================
+  PostProcess:
+    needs: [ Initialization, BuildOnPrem, Deploy ]
+    if: (!cancelled())
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Finalize the workflow
+        uses: microsoft/AL-Go-Actions/WorkflowPostProcess@v8.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          shell: powershell
+          telemetryScopeJson: ${{ needs.Initialization.outputs.telemetryScopeJson }}
+          currentJobContext: ${{ toJson(job) }}
