@@ -268,28 +268,6 @@ jobs:
             Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
             throw
           }
-              
-            Write-Host ""
-            Write-Host "✓ Compilation successful!"
-            
-            # Ensure consistent naming
-            $compiledApp = Get-ChildItem -Path $outputFolder -Filter "*.app" | Select-Object -First 1
-            if ($compiledApp) {
-              if ($compiledApp.Name -ne $appFileName) {
-                Write-Host "Renaming $($compiledApp.Name) to $appFileName"
-                Rename-Item -Path $compiledApp.FullName -NewName $appFileName
-              }
-              Write-Host "App file: $appFileName"
-            }
-            else {
-              throw "No .app file was created in output folder"
-            }
-          }
-          catch {
-            Write-Host "Error during compilation: $_" -ForegroundColor Red
-            Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
-            throw
-          }
           
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
           echo "appFileName=$appFileName" >> $env:GITHUB_OUTPUT
