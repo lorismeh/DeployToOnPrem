@@ -232,15 +232,37 @@ jobs:
           # App file naming (AL-Go convention: appName_appVersion.app)
           $appFileName = "${appName}_${appVersion}.app"
           
-          Write-Host "Compiling using BcContainerHelper..."
+          Write-Host "Downloading and extracting BC artifacts..."
           try {
-            # Compile using BcContainerHelper with ArtifactUrl
-            # This downloads artifacts and compiles in one operation
+            # Download artifacts to temp location
+            $artifactsFolder = Join-Path ([System.IO.Path]::GetTempPath()) "BCArtifacts_$([Guid]::NewGuid())"
+            Write-Host "Artifacts folder: $artifactsFolder"
+            
+            Download-Artifacts -artifactUrl $artifactUrl -basePath $artifactsFolder | Out-Null
+            
+            # Find compiler folder
+            $compilerFolder = Join-Path $artifactsFolder "compiler"
+            if (-not (Test-Path $compilerFolder)) {
+              # Try alternate paths
+              $compilerFolder = Get-ChildItem -Path $artifactsFolder -Filter "compiler" -Directory -Recurse | Select-Object -First 1 -ExpandProperty FullName
+            }
+            
+            if (-not $compilerFolder) {
+              Write-Host "Artifact structure:"
+              Get-ChildItem -Path $artifactsFolder -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
+              throw "Compiler folder not found in artifacts"
+            }
+            
+            Write-Host "Compiler folder: $compilerFolder"
+            Write-Host ""
+            
+            # Compile using the compiler folder
+            Write-Host "Compiling AL app..."
             Compile-AppWithBcCompilerFolder `
               -appProjectFolder $projectFolder `
               -appOutputFolder $outputFolder `
               -appSymbolsFolder (Join-Path $projectFolder ".alpackages") `
-              -ArtifactUrl $artifactUrl `
+              -compilerFolder $compilerFolder `
               -EnableCodeCop:$false `
               -EnableAppSourceCop:$false `
               -EnablePerTenantExtensionCop:$false `
@@ -267,6 +289,13 @@ jobs:
             Write-Host "Error during compilation: $_" -ForegroundColor Red
             Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
             throw
+          }
+          finally {
+            # Clean up temp artifacts
+            if ($artifactsFolder -and (Test-Path $artifactsFolder)) {
+              Write-Host "Cleaning up temporary artifacts..."
+              Remove-Item -Path $artifactsFolder -Recurse -Force -ErrorAction SilentlyContinue
+            }
           }
           
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
