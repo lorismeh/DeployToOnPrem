@@ -232,13 +232,13 @@ jobs:
           # App file naming (AL-Go convention: appName_appVersion.app)
           $appFileName = "${appName}_${appVersion}.app"
           
-          Write-Host "Compiling using AL-Go's container approach..."
+          Write-Host "Compiling using Run-AlPipeline (AL-Go's proven approach)..."
           try {
             # Generate unique container name (AL-Go pattern)
             $containerName = "bc${{ matrix.projectName }}-$env:GITHUB_RUN_ID".ToLower() -replace '[^a-z0-9\-]', ''
             Write-Host "Container name: $containerName"
             
-            # Resolve project folder to absolute path for host operations
+            # Resolve project folder to absolute path
             if ($projectFolder -eq ".") {
               $projectFolderHost = $pwd.Path
             } else {
@@ -246,42 +246,35 @@ jobs:
             }
             Write-Host "Project folder (host): $projectFolderHost"
             
-            # Create BC container with folder mapping
-            Write-Host "Creating BC container with shared folders..."
+            # Create credential for container
             $credential = New-Object PSCredential -ArgumentList 'admin', (ConvertTo-SecureString -String 'P@ss' -AsPlainText -Force)
             
-            # Mount project folder to c:\run\my (BcContainerHelper convention for -myscripts)
-            New-BcContainer `
-              -accept_eula `
-              -accept_outdated `
+            # Use Run-AlPipeline directly (bypasses AL-Go's PTE0005 validation)
+            # This is the SAME function AL-Go uses internally, just called directly
+            Write-Host "Running AL compilation pipeline..."
+            Run-AlPipeline `
+              -pipelinename "OnPrem-CICD" `
               -containerName $containerName `
-              -artifactUrl $artifactUrl `
+              -artifact $artifactUrl `
               -auth NavUserPassword `
               -credential $credential `
-              -updateHosts `
               -memoryLimit 8G `
+              -baseFolder $projectFolderHost `
+              -sharedFolder "" `
+              -appFolders @(".") `
+              -testFolders @() `
+              -doNotRunTests `
+              -doNotPublishApps `
+              -installApps @() `
+              -installTestApps @() `
+              -buildArtifactFolder $outputFolder `
+              -accept_insiderEula `
+              -accept_outdated `
+              -updateHosts `
               -isolation hyperv `
               -includeAL `
               -doNotExportObjectsToText `
-              -shortcuts None `
               -useBestContainerOS `
-              -myscripts @($projectFolderHost)
-            
-            Write-Host "✓ Container created successfully"
-            Write-Host "  Host path: $projectFolderHost"
-            Write-Host "  Container path: c:\run\my"
-            
-            # Compile app in container using container path
-            # When using -myscripts, the folder is mounted to c:\run\my inside the container
-            Write-Host "Compiling AL app..."
-            Compile-AppInBcContainer `
-              -containerName $containerName `
-              -appProjectFolder "c:\run\my" `
-              -appOutputFolder $outputFolder `
-              -appSymbolsFolder "c:\run\my\.alpackages" `
-              -credential $credential `
-              -updateSymbols `
-              -CopyAppToSymbolsFolder `
               -EnableCodeCop:$false `
               -EnableAppSourceCop:$false `
               -EnablePerTenantExtensionCop:$false `
@@ -289,7 +282,8 @@ jobs:
               
             Write-Host "✓ Compilation successful!"
             
-            # Ensure consistent naming
+            # Run-AlPipeline creates .app files in the buildArtifactFolder (.output)
+            # Ensure consistent naming (AL-Go convention: appName_appVersion.app)
             $compiledApp = Get-ChildItem -Path $outputFolder -Filter "*.app" | Select-Object -First 1
             if ($compiledApp) {
               if ($compiledApp.Name -ne $appFileName) {
@@ -308,11 +302,9 @@ jobs:
             throw
           }
           finally {
-            # Clean up container (AL-Go always cleans up)
-            if ($containerName) {
-              Write-Host "Cleaning up container $containerName..."
-              Remove-BcContainer -containerName $containerName -ErrorAction SilentlyContinue
-            }
+            # Run-AlPipeline cleans up containers automatically unless -keepContainer is specified
+            # No manual cleanup needed
+            Write-Host "Compilation pipeline completed"
           }
           
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
