@@ -205,9 +205,15 @@ jobs:
           Write-Host ""
           
           # Output folder (AL-Go standard: .artifacts)
-          $artifactFolder = ".artifacts"
+          # Use absolute path for Run-AlPipeline compatibility
+          $artifactFolderRelative = ".artifacts"
+          $artifactFolder = Join-Path $pwd.Path $artifactFolderRelative
+          
           if (Test-Path $artifactFolder) { Remove-Item $artifactFolder -Recurse -Force }
           New-Item -Path $artifactFolder -ItemType Directory | Out-Null
+          
+          Write-Host "Artifact output folder: $artifactFolder"
+          Write-Host ""
           
           # Generate unique container name (AL-Go pattern)
           $containerName = "bc${{ matrix.projectName }}-$env:GITHUB_RUN_ID".ToLower() -replace '[^a-z0-9\-]', ''
@@ -244,15 +250,31 @@ jobs:
               
             Write-Host ""
             Write-Host "✓ Compilation successful!"
+            Write-Host ""
             
-            # Verify and organize compiled apps
-            $appFiles = Get-ChildItem -Path $artifactFolder -Filter "*.app" -Recurse
+            # Diagnostic: Show artifact folder structure
+            Write-Host "Checking artifact folder structure..."
+            Write-Host "Artifact folder: $artifactFolder"
+            
+            if (Test-Path $artifactFolder) {
+              Write-Host "Contents of $artifactFolder :"
+              Get-ChildItem -Path $artifactFolder -Recurse | ForEach-Object {
+                Write-Host "  $($_.FullName) ($($_.Length) bytes)"
+              }
+            } else {
+              Write-Host "WARNING: Artifact folder does not exist!"
+            }
+            Write-Host ""
+            
+            # Verify and organize compiled apps (search recursively)
+            $appFiles = Get-ChildItem -Path $artifactFolder -Filter "*.app" -Recurse -File
             
             if ($appFiles.Count -eq 0) {
-              throw "No .app files were created by Run-AlPipeline"
+              throw "No .app files were created by Run-AlPipeline in $artifactFolder"
             }
             
-            Write-Host "Found $($appFiles.Count) compiled .app file(s)"
+            Write-Host "Found $($appFiles.Count) compiled .app file(s):"
+            $appFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
             
             # AL-Go artifact naming convention: appName_appVersion.app
             $appFileNameSafe = "${appName}_${appVersion}.app" -replace '[\\/:*?"<>|]', '_'
@@ -267,7 +289,15 @@ jobs:
               Copy-Item -Path $mainAppFile.FullName -Destination $targetPath -Force
             }
             
+            Write-Host ""
             Write-Host "✓ App ready: $appFileNameSafe"
+            Write-Host ""
+            
+            # Final verification before upload
+            Write-Host "Final verification of artifacts for upload:"
+            Get-ChildItem -Path $artifactFolderRelative -Recurse -File | ForEach-Object {
+              Write-Host "  ✓ $($_.FullName) ($($_.Length) bytes)"
+            }
           }
           catch {
             Write-Host ""
@@ -280,13 +310,40 @@ jobs:
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
           echo "appFileName=$appFileNameSafe" >> $env:GITHUB_OUTPUT
 
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload Build Artifacts #TODO
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.artifactsRetentionDays >= 0 && (hashFiles(format('{0}/.buildartifacts/Apps/*',inputs.project)) != '')
         with:
-          name: ${{ matrix.projectName }}-Apps-${{ matrix.buildMode }}
-          path: .artifacts/
-          retention-days: 7
-          if-no-files-found: error
+          name: ${{ steps.calculateArtifactsNames.outputs.AppsArtifactsName }}
+          path: '${{ inputs.project }}/.buildartifacts/Apps/'
+          if-no-files-found: ignore
+          retention-days: ${{ inputs.artifactsRetentionDays }}
+          
+       - name: Publish artifacts - dependencies
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.artifactsRetentionDays >= 0 && env.generateDependencyArtifact == 'True' && (hashFiles(format('{0}/.buildartifacts/Dependencies/*',inputs.project)) != '')
+        with:
+          name: ${{ steps.calculateArtifactsNames.outputs.DependenciesArtifactsName }}
+          path: '${{ inputs.project }}/.buildartifacts/Dependencies/'
+          if-no-files-found: ignore
+          retention-days: ${{ inputs.artifactsRetentionDays }}
+
+      - name: Publish artifacts - test apps
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.artifactsRetentionDays >= 0 && (hashFiles(format('{0}/.buildartifacts/TestApps/*',inputs.project)) != '')
+        with:
+          name: ${{ steps.calculateArtifactsNames.outputs.TestAppsArtifactsName }}
+          path: '${{ inputs.project }}/.buildartifacts/TestApps/'
+          if-no-files-found: ignore
+          retention-days: ${{ inputs.artifactsRetentionDays }}
+
+      - name: Publish artifacts - build output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: (success() || failure()) && (hashFiles(format('{0}/BuildOutput.txt',inputs.project)) != '')
+        with:
+          name: ${{ steps.calculateArtifactsNames.outputs.BuildOutputArtifactsName }}
+          path: '${{ inputs.project }}/BuildOutput.txt'
+          if-no-files-found: ignore
 
   # ========================================
   # Job 3: Deploy (AL-Go Environment Pattern)
@@ -316,7 +373,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download Build Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           path: .artifacts
 
