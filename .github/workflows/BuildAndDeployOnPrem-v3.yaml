@@ -121,6 +121,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read Settings
+        uses: microsoft/AL-Go-Actions/ReadSettings@v8.0
+        with:
+          shell: ${{ matrix.shell }}
+
       - name: Download Build Artifacts
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
