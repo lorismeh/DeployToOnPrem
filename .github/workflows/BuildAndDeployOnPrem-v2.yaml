@@ -224,10 +224,10 @@ jobs:
           Write-Host "Project Folder: $projectFolder"
           Write-Host ""
           
-          # Output folder (AL-Go convention)
-          $outputFolder = ".output"
-          if (Test-Path $outputFolder) { Remove-Item $outputFolder -Recurse -Force }
-          New-Item -Path $outputFolder -ItemType Directory | Out-Null
+          # Output folder (AL-Go uses .buildartifacts, not .output)
+          $buildArtifactFolder = ".buildartifacts"
+          if (Test-Path $buildArtifactFolder) { Remove-Item $buildArtifactFolder -Recurse -Force }
+          New-Item -Path $buildArtifactFolder -ItemType Directory | Out-Null
           
           # App file naming (AL-Go convention: appName_appVersion.app)
           $appFileName = "${appName}_${appVersion}.app"
@@ -267,7 +267,7 @@ jobs:
               -doNotPublishApps `
               -installApps @() `
               -installTestApps @() `
-              -buildArtifactFolder $outputFolder `
+              -buildArtifactFolder $buildArtifactFolder `
               -EnableCodeCop:$false `
               -EnableAppSourceCop:$false `
               -EnablePerTenantExtensionCop:$false `
@@ -275,21 +275,24 @@ jobs:
               
             Write-Host "✓ Compilation successful!"
             
-            # Run-AlPipeline creates .app files in the buildArtifactFolder (.output)
-            # Ensure consistent naming (AL-Go convention: appName_appVersion.app)
-            # Remove invalid filename characters from app name
-            $appFileNameSafe = "${appName}_${appVersion}.app" -replace '[\\/:*?"<>|]', '_'
+            # Run-AlPipeline outputs compiled apps to buildArtifactFolder
+            $appFile = Get-ChildItem -Path $buildArtifactFolder -Filter "*.app" -Recurse | Select-Object -First 1
             
-            $compiledApp = Get-ChildItem -Path $outputFolder -Filter "*.app" | Select-Object -First 1
-            if ($compiledApp) {
-              if ($compiledApp.Name -ne $appFileNameSafe) {
-                Write-Host "Renaming $($compiledApp.Name) to $appFileNameSafe"
-                Rename-Item -Path $compiledApp.FullName -NewName $appFileNameSafe
+            if ($appFile) {
+              # Remove invalid filename characters from app name
+              $appFileNameSafe = "${appName}_${appVersion}.app" -replace '[\\/:*?"<>|]', '_'
+              $targetPath = Join-Path $buildArtifactFolder $appFileNameSafe
+              
+              # Copy to root of .buildartifacts if it's in a subdirectory
+              if ($appFile.FullName -ne $targetPath) {
+                Write-Host "Copying $($appFile.Name) to $targetPath"
+                Copy-Item -Path $appFile.FullName -Destination $targetPath -Force
               }
-              Write-Host "App file: $appFileNameSafe"
+              
+              Write-Host "✓ App file ready: $appFileNameSafe"
             }
             else {
-              throw "No .app file was created in output folder"
+              throw "No .app file was created by Run-AlPipeline"
             }
           }
           catch {
@@ -306,11 +309,33 @@ jobs:
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
           echo "appFileName=$appFileNameSafe" >> $env:GITHUB_OUTPUT
 
+      - name: Verify Build Artifacts Exist
+        run: |
+          Write-Host "Current directory: $pwd"
+          Write-Host "Checking for .buildartifacts folder and .app files..."
+          
+          if (Test-Path ".buildartifacts") {
+            Write-Host "✓ .buildartifacts folder exists"
+            Get-ChildItem -Path ".buildartifacts" -Recurse | ForEach-Object {
+              Write-Host "  - $($_.FullName)"
+            }
+          } else {
+            Write-Host "✗ .buildartifacts folder does not exist!"
+          }
+          
+          $appFiles = Get-ChildItem -Path ".buildartifacts" -Filter "*.app" -Recurse -ErrorAction SilentlyContinue
+          Write-Host ""
+          Write-Host "Found $($appFiles.Count) .app files for upload"
+          
+          if ($appFiles.Count -eq 0) {
+            throw "No .app files found in .buildartifacts folder before artifact upload"
+          }
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.projectName }}-Apps-${{ matrix.buildMode }}
-          path: .output/*.app
+          path: .buildartifacts/*.app
           retention-days: 7
           if-no-files-found: error
 
