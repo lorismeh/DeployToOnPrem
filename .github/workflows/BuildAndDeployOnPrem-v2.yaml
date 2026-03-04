@@ -132,9 +132,6 @@ jobs:
     defaults:
       run:
         shell: ${{ matrix.githubRunnerShell }}
-    outputs:
-      appVersion: ${{ steps.build.outputs.appVersion }}
-      appFileName: ${{ steps.build.outputs.appFileName }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -436,14 +433,18 @@ jobs:
       - name: Deployment Summary
         if: always()
         run: |
-          $appVersion = "${{ needs.BuildOnPrem.outputs.appVersion }}"
-          $appFileName = "${{ needs.BuildOnPrem.outputs.appFileName }}"
-          
           Write-Host "========================================="
           Write-Host "  DEPLOYMENT SUMMARY"
           Write-Host "========================================="
-          Write-Host "App: $appFileName"
-          Write-Host "Version: $appVersion"
+          
+          # Get deployed app info from artifacts
+          $appFiles = Get-ChildItem -Path ".artifacts" -Filter "*.app" -File -Recurse -ErrorAction SilentlyContinue
+          if ($appFiles) {
+            $mainApp = $appFiles | Select-Object -First 1
+            Write-Host "App: $($mainApp.Name)"
+            Write-Host "Size: $([math]::Round($mainApp.Length / 1KB, 2)) KB"
+          }
+          
           Write-Host "Environment: ${{ matrix.environment }}"
           Write-Host "Status: ${{ job.status }}"
           Write-Host "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
