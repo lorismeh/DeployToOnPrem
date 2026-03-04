@@ -132,6 +132,9 @@ jobs:
     defaults:
       run:
         shell: ${{ matrix.githubRunnerShell }}
+    outputs:
+      appVersion: ${{ steps.build.outputs.appVersion }}
+      appFileName: ${{ steps.build.outputs.appFileName }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -314,7 +317,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: ${{ inputs.artifactsRetentionDays }}
           
-       - name: Publish artifacts - dependencies
+      - name: Publish artifacts - dependencies
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: inputs.artifactsRetentionDays >= 0 && env.generateDependencyArtifact == 'True' && (hashFiles(format('{0}/.buildartifacts/Dependencies/*',inputs.project)) != '')
         with:
