@@ -276,20 +276,30 @@ jobs:
             Write-Host "✓ Compilation successful!"
             
             # Run-AlPipeline outputs compiled apps to buildArtifactFolder
-            $appFile = Get-ChildItem -Path $buildArtifactFolder -Filter "*.app" -Recurse | Select-Object -First 1
+            Write-Host ""
+            Write-Host "Locating compiled .app files in $buildArtifactFolder..."
+            $appFiles = Get-ChildItem -Path $buildArtifactFolder -Filter "*.app" -Recurse
             
-            if ($appFile) {
+            Write-Host "Found $($appFiles.Count) .app file(s):"
+            $appFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
+            
+            if ($appFiles.Count -gt 0) {
               # Remove invalid filename characters from app name
               $appFileNameSafe = "${appName}_${appVersion}.app" -replace '[\\/:*?"<>|]', '_'
               $targetPath = Join-Path $buildArtifactFolder $appFileNameSafe
               
+              # Get the first/main app file
+              $mainAppFile = $appFiles | Where-Object { $_.Name -notmatch '^Test_' } | Select-Object -First 1
+              if (-not $mainAppFile) { $mainAppFile = $appFiles[0] }
+              
               # Copy to root of .buildartifacts if it's in a subdirectory
-              if ($appFile.FullName -ne $targetPath) {
-                Write-Host "Copying $($appFile.Name) to $targetPath"
-                Copy-Item -Path $appFile.FullName -Destination $targetPath -Force
+              if ($mainAppFile.FullName -ne $targetPath) {
+                Write-Host "Copying $($mainAppFile.Name) to $targetPath"
+                Copy-Item -Path $mainAppFile.FullName -Destination $targetPath -Force
               }
               
               Write-Host "✓ App file ready: $appFileNameSafe"
+              Write-Host "  Full path: $targetPath"
             }
             else {
               throw "No .app file was created by Run-AlPipeline"
@@ -311,7 +321,15 @@ jobs:
 
       - name: Verify Build Artifacts Exist
         run: |
-          Write-Host "Current directory: $pwd"
+          Write-Host "PowerShell current directory: $pwd"
+          Write-Host "GitHub workspace: $env:GITHUB_WORKSPACE"
+          Write-Host ""
+          
+          # Change to GitHub workspace to match upload-artifact behavior
+          Set-Location $env:GITHUB_WORKSPACE
+          Write-Host "Changed to workspace directory: $pwd"
+          Write-Host ""
+          
           Write-Host "Checking for .buildartifacts folder and .app files..."
           
           if (Test-Path ".buildartifacts") {
@@ -327,6 +345,19 @@ jobs:
           Write-Host ""
           Write-Host "Found $($appFiles.Count) .app files for upload"
           
+          # Test exact paths that upload-artifact will use
+          Write-Host ""
+          Write-Host "Testing exact upload paths:"
+          $testPaths = @(
+            ".buildartifacts/*.app",
+            ".buildartifacts/Apps/*.app", 
+            ".buildartifacts/TestApps/*.app"
+          )
+          foreach ($pattern in $testPaths) {
+            $matches = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
+            Write-Host "  $pattern -> $($matches.Count) files"
+          }
+          
           if ($appFiles.Count -eq 0) {
             throw "No .app files found in .buildartifacts folder before artifact upload"
           }
@@ -335,10 +366,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.projectName }}-Apps-${{ matrix.buildMode }}
-          path: |
-            .buildartifacts/*.app
-            .buildartifacts/Apps/*.app
-            .buildartifacts/TestApps/*.app
+          path: .buildartifacts/
           retention-days: 7
           if-no-files-found: error
 
@@ -376,10 +404,37 @@ jobs:
 
       - name: List Downloaded Artifacts
         run: |
-          Write-Host "Downloaded artifacts:"
-          Get-ChildItem -Path ".artifacts" -Recurse -File | ForEach-Object {
-            Write-Host "  - $($_.FullName)"
+          Write-Host "========================================="
+          Write-Host "  Downloaded Artifacts Structure"
+          Write-Host "========================================="
+          Write-Host ""
+          
+          if (Test-Path ".artifacts") {
+            Write-Host "All files in .artifacts:"
+            Get-ChildItem -Path ".artifacts" -Recurse | ForEach-Object {
+              if ($_.PSIsContainer) {
+                Write-Host "  [DIR]  $($_.FullName)" -ForegroundColor Cyan
+              } else {
+                Write-Host "  [FILE] $($_.FullName)" -ForegroundColor Green
+              }
+            }
+            
+            Write-Host ""
+            Write-Host "App files (.app) found:"
+            $appFiles = Get-ChildItem -Path ".artifacts" -Filter "*.app" -File -Recurse
+            if ($appFiles.Count -gt 0) {
+              $appFiles | ForEach-Object { 
+                Write-Host "  ✓ $($_.Name)" -ForegroundColor Green
+                Write-Host "    Path: $($_.FullName)" -ForegroundColor Gray
+              }
+            } else {
+              Write-Host "  ✗ No .app files found!" -ForegroundColor Red
+            }
+          } else {
+            Write-Host "  ✗ .artifacts folder does not exist!" -ForegroundColor Red
           }
+          Write-Host ""
+          Write-Host "========================================="
 
       - name: EnvName
         id: envName
@@ -403,6 +458,7 @@ jobs:
           Write-Host "  Deploying to BC OnPrem Server"
           Write-Host "  Environment: ${{ matrix.environment }}"
           Write-Host "========================================="
+          Write-Host ""
           
           # Parse secrets (AL-Go pattern)
           $secrets = $env:Secrets | ConvertFrom-Json
@@ -412,15 +468,25 @@ jobs:
             throw "AuthContext secret not found for environment ${{ matrix.environment }}"
           }
           
+          Write-Host "Searching for .app files in .artifacts folder..."
           # Get all app files from artifacts
           $appFiles = Get-ChildItem -Path ".artifacts" -Filter "*.app" -File -Recurse
           
           if ($appFiles.Count -eq 0) {
+            Write-Host "ERROR: No app files found!" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "Contents of .artifacts folder:" -ForegroundColor Yellow
+            Get-ChildItem -Path ".artifacts" -Recurse | ForEach-Object {
+              Write-Host "  - $($_.FullName)"
+            }
             throw "No app files found in artifacts folder"
           }
           
-          Write-Host "Apps to deploy:"
-          $appFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
+          Write-Host "✓ Found $($appFiles.Count) app file(s) to deploy:" -ForegroundColor Green
+          $appFiles | ForEach-Object { 
+            Write-Host "  - $($_.Name)" -ForegroundColor Cyan
+            Write-Host "    Location: $($_.DirectoryName)" -ForegroundColor Gray
+          }
           Write-Host ""
           
           # Prepare deployment parameters (AL-Go convention)
@@ -434,10 +500,13 @@ jobs:
           
           # Execute deployment script
           Write-Host "Executing deployment script..."
+          Write-Host "Script: .github/DeployToOnPrem.ps1"
+          Write-Host ""
+          
           . ".github/DeployToOnPrem.ps1" -parameters $deploymentParams
           
           Write-Host ""
-          Write-Host "✓ Deployment completed successfully!"
+          Write-Host "✓ Deployment completed successfully!" -ForegroundColor Green
 
       - name: Deployment Summary
         if: always()
