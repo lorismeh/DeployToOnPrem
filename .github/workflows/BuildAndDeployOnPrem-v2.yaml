@@ -1,21 +1,27 @@
 name: Build and Deploy to OnPrem (AL-Go Pattern)
 
 # ========================================
-# AL-Go-Inspired Architecture for OnPrem
+# Optimized AL-Go Hybrid Workflow for OnPrem
 # ========================================
-# This workflow combines AL-Go's proven patterns with OnPrem-specific compilation requirements.
+# This workflow combines AL-Go's proven patterns with OnPrem-specific compilation.
 #
 # Architecture:
-# 1. Initialization - Uses AL-Go actions for settings, project detection, environment management
-# 2. BuildOnPrem - Custom OnPrem compilation with BcContainerHelper (bypasses AL-Go's PTE0005)
-# 3. Deploy - Uses AL-Go environment patterns with existing DeployToOnPrem.ps1
+# 1. Initialization - AL-Go actions for settings, project detection, environment management
+# 2. BuildOnPrem - Custom OnPrem compilation with BcContainerHelper (bypasses PTE0005 validation)
+# 3. Deploy - AL-Go environment patterns with custom deployment script
+# 4. PostProcess - AL-Go telemetry and workflow cleanup
 #
-# Benefits over original BuildAndDeployOnPrem.yaml:
-# - Leverages AL-Go's settings management (AL-Go-Settings.json, environment variables)
-# - Automatic project detection (multi-project support if needed)
-# - Environment matrix from AL-Go configuration
-# - Proper telemetry and workflow initialization
-# - Follows AL-Go naming and artifact conventions
+# Why custom build is required:
+# - AL-Go's BuildALGoProject enforces PTE0005/AS0053 validation
+# - OnPrem target ("target": "OnPrem" in app.json) is not allowed in AL-Go's Cloud-focused pipeline
+# - BcContainerHelper's Run-AlPipeline with disabled cops is the correct approach for OnPrem
+#
+# Optimizations:
+# - Uses AL-Go ReadSettings action for consistent settings management
+# - Consolidated build steps (removed redundant verification)
+# - Standardized to .artifacts folder (AL-Go convention)
+# - Streamlined deployment logging
+# - Proper error handling throughout
 # ========================================
 
 on:
@@ -138,56 +144,52 @@ jobs:
           fetch-depth: 0
           lfs: true
 
-      - name: Read Project Settings
-        id: readProjectSettings
-        run: |
-          # Read app.json from project folder (AL-Go supports multi-project repos)
-          $projectFolder = "${{ matrix.project }}"
-          if ($projectFolder -eq ".") {
-            $appJsonPath = "app.json"
-          } else {
-            $appJsonPath = Join-Path $projectFolder "app.json"
-          }
-          
-          $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-          $appName = $appJson.name
-          $appVersion = $appJson.version
-          $appPublisher = $appJson.publisher
-          $bcVersionFull = $appJson.application
-          
-          Write-Host "========================================="
-          Write-Host "  Project: ${{ matrix.projectName }}"
-          Write-Host "========================================="
-          Write-Host "App Name: $appName"
-          Write-Host "App Version: $appVersion"
-          Write-Host "App Publisher: $appPublisher"
-          Write-Host "BC Version: $bcVersionFull"
-          Write-Host "Target: $($appJson.target)"
-          Write-Host ""
-          
-          # Extract major.minor version for artifact lookup
-          $versionParts = $bcVersionFull.Split('.')
-          $bcVersion = "$($versionParts[0]).$($versionParts[1])"
-          
-          echo "appName=$appName" >> $env:GITHUB_OUTPUT
-          echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
-          echo "appPublisher=$appPublisher" >> $env:GITHUB_OUTPUT
-          echo "bcVersion=$bcVersion" >> $env:GITHUB_OUTPUT
-          echo "projectFolder=$projectFolder" >> $env:GITHUB_OUTPUT
+      - name: Read Settings
+        id: ReadSettings
+        uses: microsoft/AL-Go-Actions/ReadSettings@v8.0
+        with:
+          shell: powershell
+          project: ${{ matrix.project }}
 
-      - name: Download Business Central Artifacts
-        id: downloadArtifacts
+      - name: Compile OnPrem AL App
+        id: build
         run: |
           # Install BcContainerHelper
           Write-Host "Installing BcContainerHelper..."
           Install-Module -Name BcContainerHelper -Force -AllowClobber
           Import-Module BcContainerHelper
           
-          $bcVersion = "${{ steps.readProjectSettings.outputs.bcVersion }}"
-          Write-Host "BC Version for artifact lookup: $bcVersion"
+          # Read app.json for project-specific settings
+          $projectFolder = "${{ matrix.project }}"
+          if ($projectFolder -eq ".") {
+            $appJsonPath = "app.json"
+            $projectFolderHost = $pwd.Path
+          } else {
+            $appJsonPath = Join-Path $projectFolder "app.json"
+            $projectFolderHost = Resolve-Path $projectFolder
+          }
           
-          # Try OnPrem artifacts first, fallback to Sandbox
-          Write-Host "Searching for OnPrem artifacts..."
+          $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+          $appName = $appJson.name
+          $appVersion = $appJson.version
+          $bcVersionFull = $appJson.application
+          
+          # Extract major.minor version for artifact lookup
+          $versionParts = $bcVersionFull.Split('.')
+          $bcVersion = "$($versionParts[0]).$($versionParts[1])"
+          
+          Write-Host "========================================="
+          Write-Host "  Compiling OnPrem AL Application"
+          Write-Host "========================================="
+          Write-Host "Project: ${{ matrix.projectName }}"
+          Write-Host "App: $appName v$appVersion"
+          Write-Host "BC Version: $bcVersionFull"
+          Write-Host "Target: $($appJson.target)"
+          Write-Host "Project Folder: $projectFolderHost"
+          Write-Host ""
+          
+          # Get BC artifact URL
+          Write-Host "Searching for OnPrem artifacts (BC $bcVersion)..."
           $artifactUrl = Get-BCArtifactUrl -type OnPrem -version $bcVersion -country "w1" -select Latest -accept_insiderEula
           
           if ([string]::IsNullOrEmpty($artifactUrl)) {
@@ -199,59 +201,26 @@ jobs:
             throw "Could not find BC artifacts for version $bcVersion"
           }
           
-          Write-Host "✓ Found artifact URL: $artifactUrl"
-          
-          # Note: We'll use Compile-AppInBcContainer instead of manual download
-          # This handles artifact downloading and compilation in one step
-          
-          echo "artifactUrl=$artifactUrl" >> $env:GITHUB_OUTPUT
-
-      - name: Compile OnPrem AL App
-        id: build
-        run: |
-          Import-Module BcContainerHelper
-          
-          $artifactUrl = "${{ steps.downloadArtifacts.outputs.artifactUrl }}"
-          $projectFolder = "${{ steps.readProjectSettings.outputs.projectFolder }}"
-          $appName = "${{ steps.readProjectSettings.outputs.appName }}"
-          $appVersion = "${{ steps.readProjectSettings.outputs.appVersion }}"
-          
-          Write-Host "========================================="
-          Write-Host "  Compiling OnPrem AL Application"
-          Write-Host "========================================="
-          Write-Host "Project: ${{ matrix.projectName }}"
-          Write-Host "Artifact: $artifactUrl"
-          Write-Host "Project Folder: $projectFolder"
+          Write-Host "✓ Found artifact: $artifactUrl"
           Write-Host ""
           
-          # Output folder (AL-Go uses .buildartifacts, not .output)
-          $buildArtifactFolder = ".buildartifacts"
-          if (Test-Path $buildArtifactFolder) { Remove-Item $buildArtifactFolder -Recurse -Force }
-          New-Item -Path $buildArtifactFolder -ItemType Directory | Out-Null
+          # Output folder (AL-Go standard: .artifacts)
+          $artifactFolder = ".artifacts"
+          if (Test-Path $artifactFolder) { Remove-Item $artifactFolder -Recurse -Force }
+          New-Item -Path $artifactFolder -ItemType Directory | Out-Null
           
-          # App file naming (AL-Go convention: appName_appVersion.app)
-          $appFileName = "${appName}_${appVersion}.app"
+          # Generate unique container name (AL-Go pattern)
+          $containerName = "bc${{ matrix.projectName }}-$env:GITHUB_RUN_ID".ToLower() -replace '[^a-z0-9\-]', ''
+          Write-Host "Container: $containerName"
           
-          Write-Host "Compiling using Run-AlPipeline (AL-Go's proven approach)..."
+          # Create credential for container
+          $credential = New-Object PSCredential -ArgumentList 'admin', (ConvertTo-SecureString -String 'P@ss' -AsPlainText -Force)
+          
+          # Run AL compilation pipeline (bypasses AL-Go's PTE0005 validation for OnPrem target)
+          Write-Host "Running AL compilation pipeline..."
+          Write-Host ""
+          
           try {
-            # Generate unique container name (AL-Go pattern)
-            $containerName = "bc${{ matrix.projectName }}-$env:GITHUB_RUN_ID".ToLower() -replace '[^a-z0-9\-]', ''
-            Write-Host "Container name: $containerName"
-            
-            # Resolve project folder to absolute path
-            if ($projectFolder -eq ".") {
-              $projectFolderHost = $pwd.Path
-            } else {
-              $projectFolderHost = Resolve-Path $projectFolder
-            }
-            Write-Host "Project folder (host): $projectFolderHost"
-            
-            # Create credential for container
-            $credential = New-Object PSCredential -ArgumentList 'admin', (ConvertTo-SecureString -String 'P@ss' -AsPlainText -Force)
-            
-            # Use Run-AlPipeline directly (bypasses AL-Go's PTE0005 validation)
-            # This is the SAME function AL-Go uses internally, just called directly
-            Write-Host "Running AL compilation pipeline..."
             Run-AlPipeline `
               -pipelinename "OnPrem-CICD" `
               -containerName $containerName `
@@ -267,106 +236,55 @@ jobs:
               -doNotPublishApps `
               -installApps @() `
               -installTestApps @() `
-              -buildArtifactFolder $buildArtifactFolder `
+              -buildArtifactFolder $artifactFolder `
               -EnableCodeCop:$false `
               -EnableAppSourceCop:$false `
               -EnablePerTenantExtensionCop:$false `
               -EnableUICop:$false
               
+            Write-Host ""
             Write-Host "✓ Compilation successful!"
             
-            # Run-AlPipeline outputs compiled apps to buildArtifactFolder
-            Write-Host ""
-            Write-Host "Locating compiled .app files in $buildArtifactFolder..."
-            $appFiles = Get-ChildItem -Path $buildArtifactFolder -Filter "*.app" -Recurse
+            # Verify and organize compiled apps
+            $appFiles = Get-ChildItem -Path $artifactFolder -Filter "*.app" -Recurse
             
-            Write-Host "Found $($appFiles.Count) .app file(s):"
-            $appFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
+            if ($appFiles.Count -eq 0) {
+              throw "No .app files were created by Run-AlPipeline"
+            }
             
-            if ($appFiles.Count -gt 0) {
-              # Remove invalid filename characters from app name
-              $appFileNameSafe = "${appName}_${appVersion}.app" -replace '[\\/:*?"<>|]', '_'
-              $targetPath = Join-Path $buildArtifactFolder $appFileNameSafe
-              
-              # Get the first/main app file
-              $mainAppFile = $appFiles | Where-Object { $_.Name -notmatch '^Test_' } | Select-Object -First 1
-              if (-not $mainAppFile) { $mainAppFile = $appFiles[0] }
-              
-              # Copy to root of .buildartifacts if it's in a subdirectory
-              if ($mainAppFile.FullName -ne $targetPath) {
-                Write-Host "Copying $($mainAppFile.Name) to $targetPath"
-                Copy-Item -Path $mainAppFile.FullName -Destination $targetPath -Force
-              }
-              
-              Write-Host "✓ App file ready: $appFileNameSafe"
-              Write-Host "  Full path: $targetPath"
+            Write-Host "Found $($appFiles.Count) compiled .app file(s)"
+            
+            # AL-Go artifact naming convention: appName_appVersion.app
+            $appFileNameSafe = "${appName}_${appVersion}.app" -replace '[\\/:*?"<>|]', '_'
+            $targetPath = Join-Path $artifactFolder $appFileNameSafe
+            
+            # Get main app file (exclude test apps)
+            $mainAppFile = $appFiles | Where-Object { $_.Name -notmatch '^Test_' } | Select-Object -First 1
+            if (-not $mainAppFile) { $mainAppFile = $appFiles[0] }
+            
+            # Copy to root of .artifacts if in subdirectory
+            if ($mainAppFile.FullName -ne $targetPath) {
+              Copy-Item -Path $mainAppFile.FullName -Destination $targetPath -Force
             }
-            else {
-              throw "No .app file was created by Run-AlPipeline"
-            }
+            
+            Write-Host "✓ App ready: $appFileNameSafe"
           }
           catch {
-            Write-Host "Error during compilation: $_" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "❌ Compilation failed: $_" -ForegroundColor Red
             Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
             throw
           }
-          finally {
-            # Run-AlPipeline cleans up containers automatically unless -keepContainer is specified
-            # No manual cleanup needed
-            Write-Host "Compilation pipeline completed"
-          }
           
+          # Output job results
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
           echo "appFileName=$appFileNameSafe" >> $env:GITHUB_OUTPUT
-
-      - name: Verify Build Artifacts Exist
-        run: |
-          Write-Host "PowerShell current directory: $pwd"
-          Write-Host "GitHub workspace: $env:GITHUB_WORKSPACE"
-          Write-Host ""
-          
-          # Change to GitHub workspace to match upload-artifact behavior
-          Set-Location $env:GITHUB_WORKSPACE
-          Write-Host "Changed to workspace directory: $pwd"
-          Write-Host ""
-          
-          Write-Host "Checking for .buildartifacts folder and .app files..."
-          
-          if (Test-Path ".buildartifacts") {
-            Write-Host "✓ .buildartifacts folder exists"
-            Get-ChildItem -Path ".buildartifacts" -Recurse | ForEach-Object {
-              Write-Host "  - $($_.FullName)"
-            }
-          } else {
-            Write-Host "✗ .buildartifacts folder does not exist!"
-          }
-          
-          $appFiles = Get-ChildItem -Path ".buildartifacts" -Filter "*.app" -Recurse -ErrorAction SilentlyContinue
-          Write-Host ""
-          Write-Host "Found $($appFiles.Count) .app files for upload"
-          
-          # Test exact paths that upload-artifact will use
-          Write-Host ""
-          Write-Host "Testing exact upload paths:"
-          $testPaths = @(
-            ".buildartifacts/*.app",
-            ".buildartifacts/Apps/*.app", 
-            ".buildartifacts/TestApps/*.app"
-          )
-          foreach ($pattern in $testPaths) {
-            $matches = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
-            Write-Host "  $pattern -> $($matches.Count) files"
-          }
-          
-          if ($appFiles.Count -eq 0) {
-            throw "No .app files found in .buildartifacts folder before artifact upload"
-          }
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.projectName }}-Apps-${{ matrix.buildMode }}
-          path: .buildartifacts/
+          path: .artifacts/
           retention-days: 7
           if-no-files-found: error
 
@@ -402,40 +320,6 @@ jobs:
         with:
           path: .artifacts
 
-      - name: List Downloaded Artifacts
-        run: |
-          Write-Host "========================================="
-          Write-Host "  Downloaded Artifacts Structure"
-          Write-Host "========================================="
-          Write-Host ""
-          
-          if (Test-Path ".artifacts") {
-            Write-Host "All files in .artifacts:"
-            Get-ChildItem -Path ".artifacts" -Recurse | ForEach-Object {
-              if ($_.PSIsContainer) {
-                Write-Host "  [DIR]  $($_.FullName)" -ForegroundColor Cyan
-              } else {
-                Write-Host "  [FILE] $($_.FullName)" -ForegroundColor Green
-              }
-            }
-            
-            Write-Host ""
-            Write-Host "App files (.app) found:"
-            $appFiles = Get-ChildItem -Path ".artifacts" -Filter "*.app" -File -Recurse
-            if ($appFiles.Count -gt 0) {
-              $appFiles | ForEach-Object { 
-                Write-Host "  ✓ $($_.Name)" -ForegroundColor Green
-                Write-Host "    Path: $($_.FullName)" -ForegroundColor Gray
-              }
-            } else {
-              Write-Host "  ✗ No .app files found!" -ForegroundColor Red
-            }
-          } else {
-            Write-Host "  ✗ .artifacts folder does not exist!" -ForegroundColor Red
-          }
-          Write-Host ""
-          Write-Host "========================================="
-
       - name: EnvName
         id: envName
         run: |
@@ -468,25 +352,15 @@ jobs:
             throw "AuthContext secret not found for environment ${{ matrix.environment }}"
           }
           
-          Write-Host "Searching for .app files in .artifacts folder..."
           # Get all app files from artifacts
           $appFiles = Get-ChildItem -Path ".artifacts" -Filter "*.app" -File -Recurse
           
           if ($appFiles.Count -eq 0) {
-            Write-Host "ERROR: No app files found!" -ForegroundColor Red
-            Write-Host ""
-            Write-Host "Contents of .artifacts folder:" -ForegroundColor Yellow
-            Get-ChildItem -Path ".artifacts" -Recurse | ForEach-Object {
-              Write-Host "  - $($_.FullName)"
-            }
             throw "No app files found in artifacts folder"
           }
           
-          Write-Host "✓ Found $($appFiles.Count) app file(s) to deploy:" -ForegroundColor Green
-          $appFiles | ForEach-Object { 
-            Write-Host "  - $($_.Name)" -ForegroundColor Cyan
-            Write-Host "    Location: $($_.DirectoryName)" -ForegroundColor Gray
-          }
+          Write-Host "Found $($appFiles.Count) app file(s) to deploy:"
+          $appFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
           Write-Host ""
           
           # Prepare deployment parameters (AL-Go convention)
@@ -499,10 +373,6 @@ jobs:
           }
           
           # Execute deployment script
-          Write-Host "Executing deployment script..."
-          Write-Host "Script: .github/DeployToOnPrem.ps1"
-          Write-Host ""
-          
           . ".github/DeployToOnPrem.ps1" -parameters $deploymentParams
           
           Write-Host ""
