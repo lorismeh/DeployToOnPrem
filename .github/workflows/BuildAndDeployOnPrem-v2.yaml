@@ -132,11 +132,9 @@ jobs:
     defaults:
       run:
         shell: ${{ matrix.githubRunnerShell }}
-    
     outputs:
       appVersion: ${{ steps.build.outputs.appVersion }}
       appFileName: ${{ steps.build.outputs.appFileName }}
-    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
