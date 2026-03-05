@@ -228,7 +228,6 @@ jobs:
               -testFolders @() `
               -doNotRunTests `
               -buildArtifactFolder $artifactFolder `
-              -doNotCleanupContainer:$false `
               -EnableCodeCop:$false `
               -EnableAppSourceCop:$false `
               -EnablePerTenantExtensionCop:$false `
