@@ -73,24 +73,6 @@ jobs:
           shell: powershell
           maxBuildDepth: ${{ env.workflowDepth }}
 
-      - name: Read secrets
-        id: ReadSecrets
-        uses: microsoft/AL-Go-Actions/ReadSecrets@v8.0
-        with:
-          shell: powershell
-          gitHubSecrets: ${{ toJson(secrets) }}
-          getSecrets: ${{ steps.DetermineDeliveryTargetSecrets.outputs.ContextSecrets }}
-
-      - name: Determine Delivery Targets
-        id: DetermineDeliveryTargets
-        uses: microsoft/AL-Go-Actions/DetermineDeliveryTargets@v8.0
-        env:
-          Secrets: '${{ steps.ReadSecrets.outputs.Secrets }}'
-        with:
-          shell: powershell
-          projectsJson: '${{ steps.determineProjectsToBuild.outputs.ProjectsJson }}'
-          checkContextSecrets: 'true'
-
       - name: Determine Deployment Environments
         id: DetermineDeploymentEnvironments
         uses: microsoft/AL-Go-Actions/DetermineDeploymentEnvironments@v8.0
