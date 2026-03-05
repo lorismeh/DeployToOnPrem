@@ -209,29 +209,37 @@ jobs:
           $containerName = "bc-onprem-$env:GITHUB_RUN_ID" -replace '[^a-z0-9\-]', ''
           $credential = New-Object PSCredential 'admin', (ConvertTo-SecureString 'P@ss' -AsPlainText -Force)
           
-          # Compile with Run-AlPipeline (bypasses Cloud-only analyzers)
-          # Note: Run-AlPipeline outputs .app files to buildArtifactFolder root
-          # We need to move them to Apps subfolder for AL-Go compatibility
-          Run-AlPipeline `
-            -pipelinename "OnPrem-Build" `
-            -containerName $containerName `
-            -artifact $artifactUrl `
-            -auth NavUserPassword `
-            -credential $credential `
-            -memoryLimit 8G `
-            -baseFolder $projectFolderHost `
-            -appFolders @(".") `
-            -testFolders @() `
-            -doNotRunTests `
-            -buildArtifactFolder $artifactFolder `
-            -outputTo $buildOutputFile `
-            -doNotCleanupContainer:$false `
-            -EnableCodeCop:$false `
-            -EnableAppSourceCop:$false `
-            -EnablePerTenantExtensionCop:$false `
-            -EnableUICop:$false
+          # Start transcript to capture build output (for AL-Go artifact)
+          Start-Transcript -Path $buildOutputFile -Append
           
-          Write-Host "✓ Run-AlPipeline complete (container will be cleaned up automatically)"
+          try {
+            # Compile with Run-AlPipeline (bypasses Cloud-only analyzers)
+            # Note: Run-AlPipeline outputs .app files to buildArtifactFolder root
+            # We need to move them to Apps subfolder for AL-Go compatibility
+            Run-AlPipeline `
+              -pipelinename "OnPrem-Build" `
+              -containerName $containerName `
+              -artifact $artifactUrl `
+              -auth NavUserPassword `
+              -credential $credential `
+              -memoryLimit 8G `
+              -baseFolder $projectFolderHost `
+              -appFolders @("src") `
+              -testFolders @() `
+              -doNotRunTests `
+              -buildArtifactFolder $artifactFolder `
+              -doNotCleanupContainer:$false `
+              -EnableCodeCop:$false `
+              -EnableAppSourceCop:$false `
+              -EnablePerTenantExtensionCop:$false `
+              -EnableUICop:$false
+            
+            Write-Host "✓ Run-AlPipeline complete (container will be cleaned up automatically)"
+          }
+          finally {
+            # Stop transcript to finalize build log
+            Stop-Transcript
+          }
           
           # Move .app files to Apps subfolder (AL-Go expects them there)
           Write-Host "Moving .app files to Apps folder..."
