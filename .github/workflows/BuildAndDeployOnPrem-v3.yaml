@@ -104,7 +104,7 @@ jobs:
   # Deploy - Pure AL-Go Pattern
   # ========================================
   Deploy:
-    needs: [ Initialization, Build, BuildPP ]
+    needs: [ Initialization, Build ]
     if: (!cancelled()) && (needs.Build.result == 'success' || needs.Build.result == 'skipped') && (needs.BuildPP.result == 'success' || needs.BuildPP.result == 'skipped') && needs.Initialization.outputs.environmentCount > 0
     strategy: ${{ fromJson(needs.Initialization.outputs.environmentsMatrixJson) }}
     runs-on: ${{ fromJson(matrix.os) }}
