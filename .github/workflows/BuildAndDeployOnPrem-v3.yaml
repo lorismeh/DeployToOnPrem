@@ -145,35 +145,17 @@ jobs:
           gitHubSecrets: ${{ toJson(secrets) }}
           getSecrets: '${{ steps.envName.outputs.envName }}-AuthContext,${{ steps.envName.outputs.envName }}_AuthContext,AuthContext'
 
-      - name: Deploy to Business Central OnPrem
+      - name: Deploy to Business Central
+        id: Deploy
+        uses: microsoft/AL-Go-Actions/Deploy@v8.0
         env:
           Secrets: '${{ steps.ReadSecrets.outputs.Secrets }}'
-        run: |
-          $secrets = $env:Secrets | ConvertFrom-Json
-          $authContextJson = $secrets.AuthContext
-          
-          if (-not $authContextJson) {
-            throw "AuthContext secret not found for environment ${{ matrix.environment }}"
-          }
-          
-          $appFiles = Get-ChildItem -Path ".artifacts" -Filter "*.app" -File -Recurse
-          if ($appFiles.Count -eq 0) {
-            throw "No app files found in artifacts folder"
-          }
-          
-          Write-Host "Deploying $($appFiles.Count) app file(s) to ${{ matrix.environment }}"
-          
-          $deploymentParams = @{
-            type = "CD"
-            apps = $appFiles.FullName
-            EnvironmentType = "OnPrem"
-            EnvironmentName = "${{ matrix.environment }}"
-            AuthContext = $authContextJson
-          }
-          
-          . ".github/DeployToOnPrem.ps1" -parameters $deploymentParams
-          
-          Write-Host "✓ Deployment completed successfully!"
+        with:
+          shell: ${{ matrix.shell }}
+          environmentName: ${{ matrix.environment }}
+          artifactsFolder: '.artifacts'
+          type: 'CD'
+          deploymentEnvironmentsJson: ${{ needs.Initialization.outputs.deploymentEnvironmentsJson }}
 
   # ========================================
   # PostProcess - Pure AL-Go
