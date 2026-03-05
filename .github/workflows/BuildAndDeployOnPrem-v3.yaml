@@ -103,7 +103,7 @@ jobs:
   # ========================================
   # Deploy - Pure AL-Go Pattern
   # ========================================
-Deploy:
+  Deploy:
     needs: [ Initialization, Build, BuildPP ]
     if: (!cancelled()) && (needs.Build.result == 'success' || needs.Build.result == 'skipped') && (needs.BuildPP.result == 'success' || needs.BuildPP.result == 'skipped') && needs.Initialization.outputs.environmentCount > 0
     strategy: ${{ fromJson(needs.Initialization.outputs.environmentsMatrixJson) }}
@@ -188,7 +188,7 @@ Deploy:
   # ========================================
   # PostProcess - Pure AL-Go
   # ========================================
-PostProcess:
+  PostProcess:
     needs: [ Initialization, Build, Deploy ]
     if: (!cancelled())
     runs-on: windows-latest
