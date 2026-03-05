@@ -202,6 +202,9 @@ jobs:
           if (Test-Path $artifactFolder) { Remove-Item $artifactFolder -Recurse -Force }
           New-Item -Path $appsFolder -ItemType Directory -Force | Out-Null
           
+          # Build output log file (for AL-Go artifact upload)
+          $buildOutputFile = Join-Path $projectFolderHost "BuildOutput.txt"
+          
           # Container name
           $containerName = "bc-onprem-$env:GITHUB_RUN_ID" -replace '[^a-z0-9\-]', ''
           $credential = New-Object PSCredential 'admin', (ConvertTo-SecureString 'P@ss' -AsPlainText -Force)
@@ -215,55 +218,69 @@ jobs:
             -credential $credential `
             -memoryLimit 8G `
             -baseFolder $projectFolderHost `
-            -appFolders @(".") `
+            -appFolders @("src") `#TODO
             -testFolders @() `
             -doNotRunTests `
             -buildArtifactFolder $artifactFolder `
+            -outputAppFiles $appsFolder `
+            -outputTo $buildOutputFile `
+            -doNotCleanupContainer:$false `
             -EnableCodeCop:$false `
             -EnableAppSourceCop:$false `
             -EnablePerTenantExtensionCop:$false `
             -EnableUICop:$false
           
-          # Copy to standard location
-          Get-ChildItem -Path $artifactFolder -Filter "*.app" -Recurse -File | ForEach-Object {
-            if ($_.Directory.Name -ne "Apps") {
-              Copy-Item $_.FullName -Destination $appsFolder -Force
-            }
-          }
+          Write-Host "✓ Run-AlPipeline complete (container will be cleaned up automatically)"
+          Write-Host "  Apps should be in: $appsFolder"
+          Write-Host "  Build log saved to: $buildOutputFile"
           
-          # DIAGNOSTIC: List what we actually have
+          # DIAGNOSTIC: Verify .app files are in the correct location for AL-Go
           Write-Host ""
           Write-Host "========================================" -ForegroundColor Cyan
           Write-Host " Build Output Verification" -ForegroundColor Cyan
           Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "Project folder: $projectFolderHost"
           Write-Host "Artifact folder: $artifactFolder"
           Write-Host "Apps folder: $appsFolder"
           Write-Host ""
-          Write-Host "Contents of artifact folder (.buildartifacts):"
-          if (Test-Path $artifactFolder) {
-            Get-ChildItem -Path $artifactFolder -Recurse | ForEach-Object {
-              Write-Host "  $($_.FullName)"
-            }
-          } else {
-            Write-Host "  [FOLDER DOES NOT EXIST!]" -ForegroundColor Red
-          }
-          Write-Host ""
-          Write-Host "Contents of Apps folder (.buildartifacts/Apps):"
+          
+          # Check if Apps folder exists and contains .app files
           if (Test-Path $appsFolder) {
-            $appFilesFound = Get-ChildItem -Path $appsFolder -Filter "*.app" -File
-            if ($appFilesFound.Count -gt 0) {
-              Write-Host "  Found $($appFilesFound.Count) .app file(s):" -ForegroundColor Green
-              $appFilesFound | ForEach-Object { Write-Host "    - $($_.Name)" -ForegroundColor Green }
+            $appFiles = Get-ChildItem -Path $appsFolder -Filter "*.app" -File
+            if ($appFiles.Count -gt 0) {
+              Write-Host "✓ SUCCESS: Found $($appFiles.Count) .app file(s) in Apps folder:" -ForegroundColor Green
+              $appFiles | ForEach-Object { 
+                $sizeKB = [math]::Round($_.Length/1KB, 2)
+                Write-Host "  - $($_.Name) ($sizeKB KB)" -ForegroundColor Green 
+              }
             } else {
-              Write-Host "  [NO .APP FILES FOUND!]" -ForegroundColor Red
+              Write-Host "✗ ERROR: Apps folder exists but contains NO .app files!" -ForegroundColor Red
+              Write-Host "  Checking if apps are elsewhere in artifact folder..." -ForegroundColor Yellow
+              $appsElsewhere = Get-ChildItem -Path $artifactFolder -Filter "*.app" -Recurse -File
+              if ($appsElsewhere.Count -gt 0) {
+                Write-Host "  Found $($appsElsewhere.Count) .app file(s) in wrong location:" -ForegroundColor Yellow
+                $appsElsewhere | ForEach-Object { Write-Host "    - $($_.FullName)" -ForegroundColor Yellow }
+              }
             }
           } else {
-            Write-Host "  [FOLDER DOES NOT EXIST!]" -ForegroundColor Red
+            Write-Host "✗ ERROR: Apps folder does not exist!" -ForegroundColor Red
           }
+          
+          Write-Host ""
+          Write-Host "Expected upload path: ${{ inputs.project }}/.buildartifacts/Apps/"
+          Write-Host ""
+          
+          # Verify BuildOutput.txt exists
+          if (Test-Path $buildOutputFile) {
+            $logSizeKB = [math]::Round((Get-Item $buildOutputFile).Length/1KB, 2)
+            Write-Host "✓ Build log created: BuildOutput.txt ($logSizeKB KB)" -ForegroundColor Green
+          } else {
+            Write-Host "⚠ Build log not found: BuildOutput.txt" -ForegroundColor Yellow
+          }
+          
           Write-Host "========================================" -ForegroundColor Cyan
           Write-Host ""
           
-          Write-Host "✓ Compilation complete. App files in .buildartifacts/Apps/"
       - name: Sign
         id: sign
         if: steps.DetermineBuildProject.outputs.BuildIt == 'True' && inputs.signArtifacts && env.doNotSignApps == 'False' && (env.keyVaultCodesignCertificateName != '' || (fromJson(env.trustedSigning).Endpoint != '' && fromJson(env.trustedSigning).Account != '' && fromJson(env.trustedSigning).CertificateProfile != ''))
