@@ -116,7 +116,6 @@ jobs:
             -appFolders @(".") `
             -testFolders @() `
             -doNotRunTests `
-            -doNotPublishApps `
             -buildArtifactFolder $artifactFolder `
             -EnableCodeCop:$false `
             -EnableAppSourceCop:$false `
@@ -129,6 +128,38 @@ jobs:
               Copy-Item $_.FullName -Destination $appsFolder -Force
             }
           }
+          
+          # DIAGNOSTIC: List what we actually have
+          Write-Host ""
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host " Build Output Verification" -ForegroundColor Cyan
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "Artifact folder: $artifactFolder"
+          Write-Host "Apps folder: $appsFolder"
+          Write-Host ""
+          Write-Host "Contents of artifact folder (.buildartifacts):"
+          if (Test-Path $artifactFolder) {
+            Get-ChildItem -Path $artifactFolder -Recurse | ForEach-Object {
+              Write-Host "  $($_.FullName)"
+            }
+          } else {
+            Write-Host "  [FOLDER DOES NOT EXIST!]" -ForegroundColor Red
+          }
+          Write-Host ""
+          Write-Host "Contents of Apps folder (.buildartifacts/Apps):"
+          if (Test-Path $appsFolder) {
+            $appFilesFound = Get-ChildItem -Path $appsFolder -Filter "*.app" -File
+            if ($appFilesFound.Count -gt 0) {
+              Write-Host "  Found $($appFilesFound.Count) .app file(s):" -ForegroundColor Green
+              $appFilesFound | ForEach-Object { Write-Host "    - $($_.Name)" -ForegroundColor Green }
+            } else {
+              Write-Host "  [NO .APP FILES FOUND!]" -ForegroundColor Red
+            }
+          } else {
+            Write-Host "  [FOLDER DOES NOT EXIST!]" -ForegroundColor Red
+          }
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host ""
           
           Write-Host "✓ Compilation complete. App files in .buildartifacts/Apps/"
 
