@@ -22,9 +22,34 @@ on:
         description: Friendly name of the built project
         required: true
         type: string
+      skippedProjectsJson:
+        description: An array of AL-Go projects to skip in compressed JSON format
+        required: false
+        default: '[]'
+        type: string
+      projectDependenciesJson:
+        description: Dependencies of the built project in compressed Json format
+        required: false
+        default: '{}'
+        type: string
       buildMode:
         description: Build mode used when building the artifacts
         required: true
+        type: string
+      baselineWorkflowRunId:
+        description: ID of the baseline workflow run, from where to download the current project dependencies, in case they are not built in the current workflow run
+        required: false
+        default: '0'
+        type: string
+      baselineWorkflowSHA:
+        description: SHA of the baseline workflow run
+        required: false
+        default: ''
+        type: string
+      secrets:
+        description: A comma-separated string with the names of the secrets, required for the workflow.
+        required: false
+        default: ''
         type: string
       artifactsRetentionDays:
         description: Number of days to keep the artifacts
@@ -51,6 +76,7 @@ on:
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 env:
   ALGoOrgSettings: ${{ vars.ALGoOrgSettings }}
