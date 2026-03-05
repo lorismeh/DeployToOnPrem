@@ -224,7 +224,7 @@ jobs:
               -credential $credential `
               -memoryLimit 8G `
               -baseFolder $projectFolderHost `
-              -appFolders @("src") `
+              -appFolders @(".") `
               -testFolders @() `
               -doNotRunTests `
               -buildArtifactFolder $artifactFolder `
