@@ -210,6 +210,8 @@ jobs:
           $credential = New-Object PSCredential 'admin', (ConvertTo-SecureString 'P@ss' -AsPlainText -Force)
           
           # Compile with Run-AlPipeline (bypasses Cloud-only analyzers)
+          # Note: Run-AlPipeline outputs .app files to buildArtifactFolder root
+          # We need to move them to Apps subfolder for AL-Go compatibility
           Run-AlPipeline `
             -pipelinename "OnPrem-Build" `
             -containerName $containerName `
@@ -222,7 +224,6 @@ jobs:
             -testFolders @() `
             -doNotRunTests `
             -buildArtifactFolder $artifactFolder `
-            -outputAppFiles $appsFolder `
             -outputTo $buildOutputFile `
             -doNotCleanupContainer:$false `
             -EnableCodeCop:$false `
@@ -231,7 +232,18 @@ jobs:
             -EnableUICop:$false
           
           Write-Host "✓ Run-AlPipeline complete (container will be cleaned up automatically)"
-          Write-Host "  Apps should be in: $appsFolder"
+          
+          # Move .app files to Apps subfolder (AL-Go expects them there)
+          Write-Host "Moving .app files to Apps folder..."
+          $appsFound = Get-ChildItem -Path $artifactFolder -Filter "*.app" -File -ErrorAction SilentlyContinue
+          if ($appsFound) {
+            foreach ($app in $appsFound) {
+              $destPath = Join-Path $appsFolder $app.Name
+              Move-Item -Path $app.FullName -Destination $destPath -Force
+              Write-Host "  Moved: $($app.Name) → Apps/" -ForegroundColor Cyan
+            }
+          }
+          
           Write-Host "  Build log saved to: $buildOutputFile"
           
           # DIAGNOSTIC: Verify .app files are in the correct location for AL-Go
