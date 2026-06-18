@@ -19,7 +19,7 @@ name: Build and Deploy to OnPrem (AL-Go Pattern)
 # Optimizations:
 # - Uses AL-Go ReadSettings action for consistent settings management
 # - Consolidated build steps (removed redundant verification)
-# - Standardized to .artifacts folder (AL-Go convention)
+# - Standardized to artifacts/ folder (no leading dot to avoid glob hidden-file skip)
 # - Streamlined deployment logging
 # - Proper error handling throughout
 # ========================================
@@ -202,10 +202,8 @@ jobs:
           Write-Host "✓ Found artifact: $artifactUrl"
           Write-Host ""
           
-          # Output folder (AL-Go standard: .artifacts)
-          # Use absolute path for Run-AlPipeline compatibility
-          $artifactFolderRelative = ".artifacts"
-          $artifactFolder = Join-Path $pwd.Path $artifactFolderRelative
+          $artifactFolderRelative = "artifacts"
+          $artifactFolder = Join-Path $env:GITHUB_WORKSPACE $artifactFolderRelative
           
           if (Test-Path $artifactFolder) { Remove-Item $artifactFolder -Recurse -Force }
           New-Item -Path $artifactFolder -ItemType Directory | Out-Null
@@ -270,7 +268,7 @@ jobs:
             $mainAppFile = $appFiles | Where-Object { $_.Name -notmatch '^Test_' } | Select-Object -First 1
             if (-not $mainAppFile) { $mainAppFile = $appFiles[0] }
             
-            # Copy to root of .artifacts if in subdirectory
+            # Copy to root of artifacts/ if in subdirectory
             if ($mainAppFile.FullName -ne $targetPath) {
               Copy-Item -Path $mainAppFile.FullName -Destination $targetPath -Force
             }
@@ -300,7 +298,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: apps
-          path: .artifacts/
+          path: artifacts/
           if-no-files-found: error
           retention-days: 7
 
@@ -335,7 +333,7 @@ jobs:
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: apps
-          path: .artifacts
+          path: artifacts
 
       - name: EnvName
         id: envName
@@ -378,7 +376,7 @@ jobs:
           }
           
           # Get all app files from artifacts
-          $appFiles = Get-ChildItem -Path ".artifacts" -Filter "*.app" -File -Recurse
+          $appFiles = Get-ChildItem -Path "artifacts" -Filter "*.app" -File -Recurse
           
           if ($appFiles.Count -eq 0) {
             throw "No app files found in artifacts folder"
@@ -411,7 +409,7 @@ jobs:
           Write-Host "========================================="
           
           # Get deployed app info from artifacts
-          $appFiles = Get-ChildItem -Path ".artifacts" -Filter "*.app" -File -Recurse -ErrorAction SilentlyContinue
+          $appFiles = Get-ChildItem -Path "artifacts" -Filter "*.app" -File -Recurse -ErrorAction SilentlyContinue
           if ($appFiles) {
             $mainApp = $appFiles | Select-Object -First 1
             Write-Host "App: $($mainApp.Name)"
