@@ -213,33 +213,21 @@ jobs:
           Write-Host "Artifact output folder: $artifactFolder"
           Write-Host ""
           
-          # Generate unique container name (AL-Go pattern)
-          $containerName = "bc${{ matrix.projectName }}-$env:GITHUB_RUN_ID".ToLower() -replace '[^a-z0-9\-]', ''
-          Write-Host "Container: $containerName"
-          
-          # Create credential for container
-          $credential = New-Object PSCredential -ArgumentList 'admin', (ConvertTo-SecureString -String 'P@ss' -AsPlainText -Force)
-          
-          # Run AL compilation pipeline (bypasses AL-Go's PTE0005 validation for OnPrem target)
-          Write-Host "Running AL compilation pipeline..."
+          # Run AL compilation pipeline without a Docker container.
+          # Omitting -containerName triggers artifact/compiler-folder mode: BcContainerHelper
+          # downloads the BC compiler from the artifact URL and compiles locally — no Docker needed.
+          # (Docker Windows containers are not supported on GitHub-hosted runners.)
+          Write-Host "Running AL compilation pipeline (compiler-folder mode, no Docker)..."
           Write-Host ""
-          
+
           try {
             Run-AlPipeline `
               -pipelinename "OnPrem-CICD" `
-              -containerName $containerName `
               -artifact $artifactUrl `
-              -auth NavUserPassword `
-              -credential $credential `
-              -memoryLimit 8G `
               -baseFolder $projectFolderHost `
-              -sharedFolder "" `
               -appFolders @(".") `
               -testFolders @() `
               -doNotRunTests `
-              -doNotPublishApps `
-              -installApps @() `
-              -installTestApps @() `
               -buildArtifactFolder $artifactFolder `
               -EnableCodeCop:$false `
               -EnableAppSourceCop:$false `
