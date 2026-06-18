@@ -1031,14 +1031,20 @@ try {
     # Extract apps
     Write-DeployLog "Extracting apps from package..."
     
-    if ($apps -like "*.zip") {
-        Expand-Archive -Path $apps -DestinationPath $tempFolder -Force
+    # Normalise $apps to an array so the extraction logic works for both a single
+    # path and an array of paths (Test-Path on an array returns an array of booleans
+    # which is always truthy, so we must check element-by-element).
+    $appsArray = @($apps)
+    if ($appsArray.Count -eq 1 -and $appsArray[0] -like "*.zip") {
+        Expand-Archive -Path $appsArray[0] -DestinationPath $tempFolder -Force
     }
-    elseif (Test-Path $apps -PathType Container) {
-        Copy-Item -Path "$apps\*" -Destination $tempFolder -Recurse -Force
+    elseif ($appsArray.Count -eq 1 -and (Test-Path $appsArray[0] -PathType Container)) {
+        Copy-Item -Path "$($appsArray[0])\*" -Destination $tempFolder -Recurse -Force
     }
     else {
-        Copy-Item -Path $apps -Destination $tempFolder -Force
+        foreach ($appPath in $appsArray) {
+            Copy-Item -Path $appPath -Destination $tempFolder -Force
+        }
     }
     
     # Find all .app files (wrap in @() to ensure array even for single/null results)

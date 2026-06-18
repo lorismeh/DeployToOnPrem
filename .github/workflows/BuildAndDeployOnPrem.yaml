@@ -308,40 +308,13 @@ jobs:
           echo "appVersion=$appVersion" >> $env:GITHUB_OUTPUT
           echo "appFileName=$appFileNameSafe" >> $env:GITHUB_OUTPUT
 
-      - name: Upload Build Artifacts #TODO
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: inputs.artifactsRetentionDays >= 0 && (hashFiles(format('{0}/.buildartifacts/Apps/*',inputs.project)) != '')
         with:
-          name: ${{ steps.calculateArtifactsNames.outputs.AppsArtifactsName }}
-          path: '${{ inputs.project }}/.buildartifacts/Apps/'
-          if-no-files-found: ignore
-          retention-days: ${{ inputs.artifactsRetentionDays }}
-          
-      - name: Publish artifacts - dependencies
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: inputs.artifactsRetentionDays >= 0 && env.generateDependencyArtifact == 'True' && (hashFiles(format('{0}/.buildartifacts/Dependencies/*',inputs.project)) != '')
-        with:
-          name: ${{ steps.calculateArtifactsNames.outputs.DependenciesArtifactsName }}
-          path: '${{ inputs.project }}/.buildartifacts/Dependencies/'
-          if-no-files-found: ignore
-          retention-days: ${{ inputs.artifactsRetentionDays }}
-
-      - name: Publish artifacts - test apps
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: inputs.artifactsRetentionDays >= 0 && (hashFiles(format('{0}/.buildartifacts/TestApps/*',inputs.project)) != '')
-        with:
-          name: ${{ steps.calculateArtifactsNames.outputs.TestAppsArtifactsName }}
-          path: '${{ inputs.project }}/.buildartifacts/TestApps/'
-          if-no-files-found: ignore
-          retention-days: ${{ inputs.artifactsRetentionDays }}
-
-      - name: Publish artifacts - build output
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: (success() || failure()) && (hashFiles(format('{0}/BuildOutput.txt',inputs.project)) != '')
-        with:
-          name: ${{ steps.calculateArtifactsNames.outputs.BuildOutputArtifactsName }}
-          path: '${{ inputs.project }}/BuildOutput.txt'
-          if-no-files-found: ignore
+          name: apps
+          path: .artifacts/
+          if-no-files-found: error
+          retention-days: 7
 
   # ========================================
   # Job 3: Deploy (AL-Go Environment Pattern)
@@ -373,6 +346,7 @@ jobs:
       - name: Download Build Artifacts
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
+          name: apps
           path: .artifacts
 
       - name: EnvName
@@ -400,11 +374,19 @@ jobs:
           Write-Host ""
           
           # Parse secrets (AL-Go pattern)
+          if ([string]::IsNullOrEmpty($env:Secrets)) {
+            throw "ReadSecrets returned no output. Ensure an AuthContext secret is configured for environment '${{ matrix.environment }}'."
+          }
           $secrets = $env:Secrets | ConvertFrom-Json
-          $authContextJson = $secrets.AuthContext
-          
+
+          # Try secret keys in order: envName-AuthContext, envName_AuthContext, AuthContext
+          $envName = '${{ steps.envName.outputs.envName }}'
+          $authContextJson = $secrets."$envName-AuthContext"
+          if (-not $authContextJson) { $authContextJson = $secrets."${envName}_AuthContext" }
+          if (-not $authContextJson) { $authContextJson = $secrets.AuthContext }
+
           if (-not $authContextJson) {
-            throw "AuthContext secret not found for environment ${{ matrix.environment }}"
+            throw "AuthContext secret not found for environment '${{ matrix.environment }}'. Checked: '$envName-AuthContext', '${envName}_AuthContext', 'AuthContext'."
           }
           
           # Get all app files from artifacts

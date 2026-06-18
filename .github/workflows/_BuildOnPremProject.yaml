@@ -72,6 +72,11 @@ on:
         description: JSON formatted needs context
         type: string
         default: '{}'
+      checkoutRef:
+        description: The ref to checkout
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
