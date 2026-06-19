@@ -341,65 +341,51 @@ jobs:
           $envName = '${{ matrix.environment }}'.split(' ')[0]
           echo "envName=$envName" >> $env:GITHUB_OUTPUT
 
-      - name: Read Secrets
-        id: ReadSecrets
-        uses: microsoft/AL-Go-Actions/ReadSecrets@v8.0
-        with:
-          shell: ${{ matrix.shell }}
-          gitHubSecrets: ${{ toJson(secrets) }}
-          getSecrets: '${{ steps.envName.outputs.envName }}-AuthContext,${{ steps.envName.outputs.envName }}_AuthContext,AuthContext'
-
       - name: Deploy to Business Central OnPrem
         env:
-          Secrets: '${{ steps.ReadSecrets.outputs.Secrets }}'
+          AUTH_CONTEXT: ${{ secrets.AuthContext }}
         run: |
           Write-Host "========================================="
           Write-Host "  Deploying to BC OnPrem Server"
           Write-Host "  Environment: ${{ matrix.environment }}"
           Write-Host "========================================="
           Write-Host ""
-          
-          # Parse secrets (AL-Go pattern)
-          if ([string]::IsNullOrEmpty($env:Secrets)) {
-            throw "ReadSecrets returned no output. Ensure an AuthContext secret is configured for environment '${{ matrix.environment }}'."
-          }
-          $secrets = $env:Secrets | ConvertFrom-Json
 
-          # Try secret keys in order: envName-AuthContext, envName_AuthContext, AuthContext
-          $envName = '${{ steps.envName.outputs.envName }}'
-          $authContextJson = $secrets."$envName-AuthContext"
-          if (-not $authContextJson) { $authContextJson = $secrets."${envName}_AuthContext" }
-          if (-not $authContextJson) { $authContextJson = $secrets.AuthContext }
+          # Read AuthContext directly from the GitHub Environment secret.
+          # The secret must be named "AuthContext" inside the BCOnPremTest GitHub Environment.
+          $authContextJson = $env:AUTH_CONTEXT
 
-          if (-not $authContextJson) {
-            throw "AuthContext secret not found for environment '${{ matrix.environment }}'. Checked: '$envName-AuthContext', '${envName}_AuthContext', 'AuthContext'."
+          if ([string]::IsNullOrEmpty($authContextJson)) {
+            throw "AuthContext secret is empty. " +
+                  "Add an 'AuthContext' secret to the '${{ matrix.environment }}' GitHub Environment " +
+                  "(Settings → Environments → ${{ matrix.environment }} → Environment secrets)."
           }
-          
+
           # Get all app files from artifacts
-          $appFiles = Get-ChildItem -Path "artifacts" -Filter "*.app" -File -Recurse
-          
+          $appFiles = @(Get-ChildItem -Path "artifacts" -Filter "*.app" -File -Recurse)
+
           if ($appFiles.Count -eq 0) {
-            throw "No app files found in artifacts folder"
+            throw "No .app files found in the artifacts folder."
           }
-          
+
           Write-Host "Found $($appFiles.Count) app file(s) to deploy:"
           $appFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
           Write-Host ""
-          
-          # Prepare deployment parameters (AL-Go convention)
+
+          # Prepare deployment parameters
           $deploymentParams = @{
-            type = "CD"
-            apps = $appFiles.FullName
+            type            = "CD"
+            Apps            = @($appFiles.FullName)
             EnvironmentType = "OnPrem"
             EnvironmentName = "${{ matrix.environment }}"
-            AuthContext = $authContextJson
+            AuthContext     = $authContextJson
           }
-          
+
           # Execute deployment script
           . ".github/DeployToOnPrem.ps1" -parameters $deploymentParams
-          
+
           Write-Host ""
-          Write-Host "✓ Deployment completed successfully!" -ForegroundColor Green
+          Write-Host "Deployment completed successfully!"
 
       - name: Deployment Summary
         if: always()
