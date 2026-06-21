@@ -339,11 +339,26 @@ jobs:
         id: envName
         run: |
           $envName = '${{ matrix.environment }}'.split(' ')[0]
+          $authContextSecretName = ($envName.ToUpper() -replace '[^A-Z0-9]', '_') + '_AUTHCONTEXT'
           echo "envName=$envName" >> $env:GITHUB_OUTPUT
+          echo "authContextSecretName=$authContextSecretName" >> $env:GITHUB_OUTPUT
+
+      - name: Read settings
+        uses: microsoft/AL-Go-Actions/ReadSettings@v8.0
+        with:
+          shell: ${{ matrix.shell }}
+
+      - name: Read Secrets
+        id: ReadSecrets
+        uses: microsoft/AL-Go-Actions/ReadSecrets@v8.0
+        with:
+          shell: ${{ matrix.shell }}
+          gitHubSecrets: ${{ toJson(secrets) }}
+          getSecrets: '${{ steps.envName.outputs.authContextSecretName }},${{ steps.envName.outputs.envName }}-AuthContext,${{ steps.envName.outputs.envName }}_AuthContext,AuthContext'
 
       - name: Deploy to Business Central OnPrem
         env:
-          AUTH_CONTEXT: ${{ secrets.AuthContext }}
+          Secrets: '${{ steps.ReadSecrets.outputs.Secrets }}'
         run: |
           Write-Host "========================================="
           Write-Host "  Deploying to BC OnPrem Server"
@@ -351,17 +366,20 @@ jobs:
           Write-Host "========================================="
           Write-Host ""
 
-          # Read AuthContext directly from the GitHub Environment secret.
-          # The secret must be named "AuthContext" inside the BCOnPremTest GitHub Environment.
-          $authContextJson = $env:AUTH_CONTEXT
+          $envName = '${{ steps.envName.outputs.envName }}'
+          $authContextSecretName = '${{ steps.envName.outputs.authContextSecretName }}'
 
-          if ([string]::IsNullOrEmpty($authContextJson)) {
-            throw "AuthContext secret is empty. " +
-                  "Add an 'AuthContext' secret to the '${{ matrix.environment }}' GitHub Environment " +
-                  "(Settings → Environments → ${{ matrix.environment }} → Environment secrets)."
+          $secrets = $env:Secrets | ConvertFrom-Json
+          $authContextJson = $secrets.$authContextSecretName
+          if (-not $authContextJson) { $authContextJson = $secrets."$envName-AuthContext" }
+          if (-not $authContextJson) { $authContextJson = $secrets."${envName}_AuthContext" }
+          if (-not $authContextJson) { $authContextJson = $secrets.AuthContext }
+
+          if (-not $authContextJson) {
+            throw "AuthContext secret not found. Checked secrets: '$authContextSecretName', '$envName-AuthContext', '${envName}_AuthContext', 'AuthContext'."
           }
 
-          # Get all app files from artifacts
+          # Get all .app files from artifacts
           $appFiles = @(Get-ChildItem -Path "artifacts" -Filter "*.app" -File -Recurse)
 
           if ($appFiles.Count -eq 0) {
