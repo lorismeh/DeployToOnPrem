@@ -189,10 +189,20 @@ jobs:
           $bcVersionFull = $appJson.application
           $versionParts = $bcVersionFull.Split('.')
           $bcVersion = "$($versionParts[0]).$($versionParts[1])"
-          
+
+          # Version strategy 0 (AL-Go default): major.minor.run_number.run_attempt
+          $v = [System.Version]$appVersion
+          $appVersion = "$($v.Major).$($v.Minor).${{ github.run_number }}.${{ github.run_attempt }}"
+          $appJson.version = $appVersion
+          [System.IO.File]::WriteAllText(
+            (Resolve-Path $appJsonPath).Path,
+            ($appJson | ConvertTo-Json -Depth 100),
+            [System.Text.Encoding]::UTF8
+          )
+
           Write-Host "Compiling: $appName v$appVersion (BC $bcVersion, Target: $($appJson.target))"
-          
-          # Get BC artifact URL (OnPrem)
+
+          # Get BC artifact URL (OnPrem) — replaces AL-Go's DetermineArtifactUrl for target:OnPrem
           $artifactUrl = Get-BCArtifactUrl -type OnPrem -version $bcVersion -country "w1" -select Latest -accept_insiderEula
           if ([string]::IsNullOrEmpty($artifactUrl)) {
             $artifactUrl = Get-BCArtifactUrl -type Sandbox -version $bcVersion -country "w1" -select Latest -accept_insiderEula
@@ -200,34 +210,26 @@ jobs:
           if ([string]::IsNullOrEmpty($artifactUrl)) {
             throw "Could not find BC artifacts for version $bcVersion"
           }
-          
+
           # Output folder (AL-Go standard: .buildartifacts)
           $artifactFolder = Join-Path $projectFolderHost ".buildartifacts"
           $appsFolder = Join-Path $artifactFolder "Apps"
           if (Test-Path $artifactFolder) { Remove-Item $artifactFolder -Recurse -Force }
           New-Item -Path $appsFolder -ItemType Directory -Force | Out-Null
-          
+
           # Build output log file (for AL-Go artifact upload)
           $buildOutputFile = Join-Path $projectFolderHost "BuildOutput.txt"
-          
-          # Container name
-          $containerName = "bc-onprem-$env:GITHUB_RUN_ID" -replace '[^a-z0-9\-]', ''
-          $credential = New-Object PSCredential 'admin', (ConvertTo-SecureString 'P@ss' -AsPlainText -Force)
-          
+
           # Start transcript to capture build output (for AL-Go artifact)
           Start-Transcript -Path $buildOutputFile -Append
-          
+
           try {
-            # Compile with Run-AlPipeline (bypasses Cloud-only analyzers)
-            # Note: Run-AlPipeline outputs .app files to buildArtifactFolder root
-            # We need to move them to Apps subfolder for AL-Go compatibility
+            # Compile with Run-AlPipeline in compiler-folder mode (no Docker).
+            # Omitting -containerName makes BcContainerHelper download the BC compiler
+            # from the artifact URL and compile locally — no Docker needed.
             Run-AlPipeline `
               -pipelinename "OnPrem-Build" `
-              -containerName $containerName `
               -artifact $artifactUrl `
-              -auth NavUserPassword `
-              -credential $credential `
-              -memoryLimit 8G `
               -baseFolder $projectFolderHost `
               -appFolders @(".") `
               -testFolders @() `
@@ -237,11 +239,10 @@ jobs:
               -EnableAppSourceCop:$false `
               -EnablePerTenantExtensionCop:$false `
               -EnableUICop:$false
-            
-            Write-Host "✓ Run-AlPipeline complete (container will be cleaned up automatically)"
+
+            Write-Host "✓ Compilation successful"
           }
           finally {
-            # Stop transcript to finalize build log
             Stop-Transcript
           }
           
