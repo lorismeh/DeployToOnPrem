@@ -171,7 +171,18 @@ jobs:
           $appName = $appJson.name
           $appVersion = $appJson.version
           $bcVersionFull = $appJson.application
-          
+
+          # Version strategy 0 (AL-Go default): major.minor.run_number.run_attempt
+          $v = [System.Version]$appVersion
+          $appVersion = "$($v.Major).$($v.Minor).${{ github.run_number }}.${{ github.run_attempt }}"
+          $appJson.version = $appVersion
+          [System.IO.File]::WriteAllText(
+            (Resolve-Path $appJsonPath).Path,
+            ($appJson | ConvertTo-Json -Depth 100),
+            [System.Text.Encoding]::UTF8
+          )
+          Write-Host "Build version: $appVersion"
+
           # Extract major.minor version for artifact lookup
           $versionParts = $bcVersionFull.Split('.')
           $bcVersion = "$($versionParts[0]).$($versionParts[1])"
