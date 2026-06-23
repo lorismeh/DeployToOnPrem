@@ -358,7 +358,7 @@ jobs:
 
       - name: Deploy to Business Central OnPrem
         env:
-          Secrets: '${{ steps.ReadSecrets.outputs.Secrets }}'
+          GITHUB_SECRETS: ${{ toJson(secrets) }}
         run: |
           Write-Host "========================================="
           Write-Host "  Deploying to BC OnPrem Server"
@@ -369,14 +369,18 @@ jobs:
           $envName = '${{ steps.envName.outputs.envName }}'
           $authContextSecretName = '${{ steps.envName.outputs.authContextSecretName }}'
 
-          $secrets = $env:Secrets | ConvertFrom-Json
-          $authContextJson = $secrets.$authContextSecretName
-          if (-not $authContextJson) { $authContextJson = $secrets."$envName-AuthContext" }
-          if (-not $authContextJson) { $authContextJson = $secrets."${envName}_AuthContext" }
-          if (-not $authContextJson) { $authContextJson = $secrets.AuthContext }
+          # Read directly from the serialized secrets context (plain text, not the ReadSecrets
+          # encoded output). Dynamic lookup: BCOnPremTest -> BCONPREMTEST_AUTHCONTEXT, etc.
+          $allSecrets = $env:GITHUB_SECRETS | ConvertFrom-Json
+
+          $authContextJson = $allSecrets.$authContextSecretName
+          if (-not $authContextJson) { $authContextJson = $allSecrets."$envName-AuthContext" }
+          if (-not $authContextJson) { $authContextJson = $allSecrets."${envName}_AuthContext" }
+          if (-not $authContextJson) { $authContextJson = $allSecrets.AuthContext }
 
           if (-not $authContextJson) {
-            throw "AuthContext secret not found. Checked secrets: '$authContextSecretName', '$envName-AuthContext', '${envName}_AuthContext', 'AuthContext'."
+            throw "AuthContext secret not found. Checked: '$authContextSecretName', '$envName-AuthContext', '${envName}_AuthContext', 'AuthContext'. " +
+                  "Ensure the '${{ matrix.environment }}' GitHub Environment has a secret named '$authContextSecretName'."
           }
 
           # Get all .app files from artifacts
